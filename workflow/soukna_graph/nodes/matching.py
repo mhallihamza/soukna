@@ -16,8 +16,48 @@ from ..state import AgentState
 from ..tracing import traced
 
 
+def _breakdown(opp: dict[str, Any], company: dict[str, Any]) -> dict[str, int]:
+    """Facteurs 0-100 affichés dans le drawer du dashboard."""
+    osec = (opp.get("sector") or "").strip().lower()
+    csecs = [s.strip().lower() for s in (company.get("sectors") or [])]
+    if osec and osec in csecs:
+        sector = 90
+    elif not osec:
+        sector = 55
+    else:
+        sector = 30
+
+    oreg = (opp.get("region") or opp.get("city") or "").strip().lower()
+    cregs = [r.strip().lower() for r in (company.get("regions") or [])]
+    if oreg and oreg in cregs:
+        region = 95
+    elif not oreg:
+        region = 55
+    else:
+        region = 30
+
+    title = (opp.get("title") or "").lower()
+    hits = [k for k in (company.get("keywords") or []) if k and k.strip().lower() in title]
+    keywords = min(100, 35 + 25 * len(hits))
+
+    digits = re.findall(r"\d{4,}", (opp.get("amount") or "").replace(" ", ""))
+    if not digits:
+        size = 65
+    else:
+        ceiling = max(int(n) for n in digits)
+        if ceiling < 1_000_000:
+            size = 85
+        elif ceiling < 5_000_000:
+            size = 70
+        else:
+            size = 75 if (company.get("size") or "pme") == "grande" else 40
+
+    return {"sector": sector, "keywords": keywords, "region": region,
+            "size": size, "history": 50}
+
+
 def _heuristic_match(opp: dict[str, Any],
-                     company: dict[str, Any]) -> tuple[int, list[str], list[str]]:
+                     company: dict[str, Any]) -> tuple[int, list[str], list[str], dict[str, int]]:
     """Scoring sans LLM : secteur (50) + géographie (25) + mots-clés (15)."""
     score = 0
     reasons: list[str] = []
@@ -71,11 +111,11 @@ def _heuristic_match(opp: dict[str, Any],
     if "garantie" in title or "caution" in title:
         risks.append("Garantie provisoire à préparer.")
 
-    return max(0, min(100, score)), reasons, risks
+    return max(0, min(100, score)), reasons, risks, _breakdown(opp, company)
 
 
 def _score_batch(llm: Any, company: dict[str, Any],
-                 opps: list[dict[str, Any]]) -> list[tuple[int, list[str], list[str]]]:
+                 opps: list[dict[str, Any]]) -> list[tuple[int, list[str], list[str], dict[str, int]]]:
     """1 appel LLM pour toutes les opportunités d'une entreprise ; repli total."""
     results = [_heuristic_match(o, company) for o in opps]
     if llm is None:
@@ -120,7 +160,7 @@ def _score_batch(llm: Any, company: dict[str, Any],
             score = results[i][0]
         reasons = [str(r) for r in (m.get("reasons") or [])][:3] or results[i][1]
         risks = [str(r) for r in (m.get("risks") or [])][:4]
-        results[i] = (score, reasons, risks)
+        results[i] = (score, reasons, risks, results[i][3])
     return results
 
 
@@ -141,7 +181,7 @@ def matching_node(state: AgentState) -> dict[str, Any]:
         opps = db.opportunities_without_match(str(company["id"]), limit=10)
         if not opps:
             continue
-        for opp, (score, reasons, risks) in zip(opps, _score_batch(llm, company, opps)):
+        for opp, (score, reasons, risks, breakdown) in zip(opps, _score_batch(llm, company, opps)):
             db.upsert_match(
                 opportunity_id=str(opp["id"]),
                 company_id=str(company["id"]),
@@ -149,6 +189,7 @@ def matching_node(state: AgentState) -> dict[str, Any]:
                 reasons=reasons,
                 verdict="",
                 risks=risks,
+                breakdown=breakdown,
             )
             items.append({
                 "company_id": str(company["id"]),

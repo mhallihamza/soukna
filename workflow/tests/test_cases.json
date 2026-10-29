@@ -1,0 +1,87 @@
+# =====================================================================
+# Dataset d'évaluation — 10 cas exécutés sur le VRAI graphe, jugés par
+# LLM (MISTRAL_MODEL) ou heuristique sans clé. Chaque cas déclare le
+# message et les critères attendus (intent + mots-clés de la réponse).
+# =====================================================================
+[
+  {
+    "id": "greeting_fr",
+    "message": "Bonjour",
+    "expected": {
+      "intent": "greeting",
+      "reply_contains": ["Soukna", "opportunités"]
+    }
+  },
+  {
+    "id": "greeting_ar",
+    "message": "سلام عليكم",
+    "expected": {
+      "intent": "greeting",
+      "reply_contains": ["Soukna"]
+    }
+  },
+  {
+    "id": "opportunities_fr",
+    "message": "Quelles opportunités pour moi aujourd'hui ?",
+    "expected": {
+      "intent": "opportunities",
+      "reply_contains": ["Match", "SOUKNA"]
+    }
+  },
+  {
+    "id": "opportunities_en",
+    "message": "Hello, what opportunities do you have for me?",
+    "expected": {
+      "intent": "opportunities",
+      "reply_contains": ["Match"]
+    }
+  },
+  {
+    "id": "digest_request_fr",
+    "message": "Envoie-moi la synthèse du jour stp",
+    "expected": {
+      "intent": "digest_request",
+      "reply_contains": ["SOUKNA"]
+    }
+  },
+  {
+    "id": "digest_request_recap",
+    "message": "Donne-moi le récapitulatif des marchés",
+    "expected": {
+      "intent": "digest_request",
+      "reply_contains": ["SOUKNA"]
+    }
+  },
+  {
+    "id": "profile_update_sector",
+    "message": "Je veux mettre à jour mon profil : secteur Informatique, région Rabat",
+    "expected": {
+      "intent": "profile_update",
+      "reply_contains": ["Profil"]
+    }
+  },
+  {
+    "id": "profile_update_region",
+    "message": "Changer ma région à Casablanca",
+    "expected": {
+      "intent": "profile_update",
+      "reply_contains": ["Profil"]
+    }
+  },
+  {
+    "id": "opportunities_synthese_mix",
+    "message": "Bonjour, montre-moi la synthèse des opportunités matchées",
+    "expected": {
+      "intent": "digest_request",
+      "reply_contains": ["SOUKNA"]
+    }
+  },
+  {
+    "id": "other_out_of_scope",
+    "message": "Quel temps fait-il aujourd'hui à Casablanca ?",
+    "expected": {
+      "intent": "other",
+      "reply_contains": ["Soukna", "opportunités"]
+    }
+  }
+]

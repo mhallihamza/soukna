@@ -54,6 +54,38 @@ MONTHS_FR = {
 }
 
 
+# Correspondance objet → secteur (terme de recherche = secteur principal ;
+# cette déduction reste disponible comme repli et pour les tests).
+SECTOR_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("Informatique", ["informatique", "numérique", "numerique", "logiciel",
+                      "plateforme", "digital", "système d'information",
+                      "télécom", "telecom", "hébergement", "application",
+                      "cybersécurité", "cybersecurite", "web", "digitalisation"]),
+    ("BTP", ["construction", "travaux", "réhabilitation", "bâtiment", "batiment",
+             "génie civil", "voirie", "aménagement", "amenagement", "route",
+             "maçonnerie", "terrassement", "parking"]),
+    ("Fournitures", ["fourniture", "acquisition", "équipement", "mobilier",
+                     "matériel", "materiel", "consommables"]),
+    ("Services et maintenance", ["maintenance", "nettoyage", "gardiennage",
+                                 "entretien", "propreté", "sécurité privée",
+                                 "reprographie", "transport",
+                                 "location de véhicules"]),
+    ("Conseil et études", ["étude", "etude", "conseil", "audit", "assistance",
+                           "ingénierie", "ingenierie", "formation", "conception",
+                           "programmation", "expertise"]),
+]
+
+
+def _sector_from_title(title: str) -> str:
+    low = title.lower()
+    best, best_hits = "", 0
+    for sector, words in SECTOR_KEYWORDS:
+        hits = sum(1 for w in words if re.search(rf"\b{re.escape(w)}", low))
+        if hits > best_hits:
+            best, best_hits = sector, hits
+    return best
+
+
 def _parse_form(html: str) -> dict[str, str]:
     """Champs hidden + text du formulaire principal (ordre d'attributs libre)."""
     fields: dict[str, str] = {}
@@ -123,12 +155,18 @@ def _parse_rows(html: str) -> list[dict[str, Any]]:
     """Un bloc de résultat par index N (`...tableauResultSearch_ctlN_...`)."""
     items: list[dict[str, Any]] = []
     for n in range(60):
-        marker = f"ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n}_"
+        marker = f'id="ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n}_'
         start = html.find(marker)
         if start == -1:
             break
-        next_marker = f"ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n + 1}_"
+        next_marker = f'id="ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n + 1}_'
         end = html.find(next_marker, start)
+        if end != -1:
+            # Reculer au début du tag contenant le marqueur suivant : sinon
+            # un fragment de balise coupée (« <div ») se glisse dans les valeurs.
+            tag_start = html.rfind("<", start, end)
+            if tag_start != -1:
+                end = tag_start
         block = html[start:end if end != -1 else start + 25000]
         lines = _strip_tags(block)
 

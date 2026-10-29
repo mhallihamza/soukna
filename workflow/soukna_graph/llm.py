@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 import requests
@@ -31,17 +30,28 @@ def make_llm():
 
 
 def extract_json(text: str) -> dict[str, Any] | None:
-    """Prend le premier objet JSON d'un texte (tolère les fences)."""
+    """Prend le premier objet JSON d'un texte (gère les accolades imbriquées)."""
     if not text:
         return None
-    candidates = re.findall(r"\{.*?\}", str(text), flags=re.DOTALL)
-    for cand in candidates:
-        try:
-            obj = json.loads(cand)
-            if isinstance(obj, dict):
-                return obj
-        except (json.JSONDecodeError, ValueError):
+    text = str(text)
+    for i, ch in enumerate(text):
+        if ch != "{":
             continue
+        depth = 0
+        for j in range(i, len(text)):
+            if text[j] == "{":
+                depth += 1
+            elif text[j] == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[i:j + 1]
+                    try:
+                        obj = json.loads(candidate)
+                        if isinstance(obj, dict):
+                            return obj
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    break
     return None
 
 

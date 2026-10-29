@@ -69,7 +69,7 @@ def _verify(token: str) -> dict[str, Any] | None:
 _bearer = HTTPBearer(auto_error=False)
 
 
-def _check(creds: HTTPAuthorizationCredentials | None) -> dict[str, Any]:
+def _check(creds: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> dict[str, Any]:
     if creds is None:
         raise HTTPException(401, "Token manquant")
     payload = _verify(creds.credentials)
@@ -121,12 +121,21 @@ class CompanyBody(BaseModel):
 
 
 class ProfilePatch(BaseModel):
+    name: str | None = None
     sectors: list[str] | None = None
     keywords: list[str] | None = None
     regions: list[str] | None = None
     size: str | None = None
     channel_whatsapp: bool | None = None
     channel_email: bool | None = None
+    max_guarantee: int | None = None
+    alert_min_score: int | None = None
+
+
+class MatchPatch(BaseModel):
+    saved: bool | None = None
+    status: str | None = None   # study | prep | submitted | new
+    note: str | None = None
 
 
 @app.post("/auth/login")
@@ -134,7 +143,8 @@ def login(body: LoginBody) -> dict[str, Any]:
     exp = time.time() + config.TOKEN_TTL_HOURS * 3600
     if body.username and body.username == config.ADMIN_USERNAME \
             and body.password == config.ADMIN_PASSWORD:
-        return {"token": _sign({"role": "admin", "sub": body.username, "exp": exp})}
+        return {"token": _sign({"role": "admin", "sub": body.username, "exp": exp}),
+                "role": "admin"}
     if body.email:
         rows = db.query("SELECT * FROM companies WHERE email = %s", (body.email,))
         if rows and rows[0].get("password_hash") == _hash_password(body.password):
@@ -146,6 +156,7 @@ def login(body: LoginBody) -> dict[str, Any]:
                     "company_id": str(company["id"]),
                     "exp": exp,
                 }),
+                "role": "entreprise",
             }
     raise HTTPException(401, "Identifiants invalides")
 
@@ -272,13 +283,18 @@ def get_profile(company: dict[str, Any] = Depends(require_entreprise)) -> dict[s
 def patch_profile(patch: ProfilePatch,
                   company: dict[str, Any] = Depends(require_entreprise)) -> dict[str, Any]:
     company_id = str(company["id"])
-    if any(v is not None for v in (patch.sectors, patch.keywords, patch.regions, patch.size)):
+    if any(v is not None for v in (patch.name, patch.sectors, patch.keywords,
+                                   patch.regions, patch.size, patch.max_guarantee,
+                                   patch.alert_min_score)):
         db.update_company_profile(
             company_id,
+            name=patch.name,
             sectors=patch.sectors,
             keywords=patch.keywords,
             regions=patch.regions,
             size=patch.size,
+            max_guarantee=patch.max_guarantee,
+            alert_min_score=patch.alert_min_score,
         )
     if patch.channel_whatsapp is not None or patch.channel_email is not None:
         db.set_channel_prefs(
@@ -294,7 +310,7 @@ def patch_profile(patch: ProfilePatch,
 @app.get("/opportunities")
 def get_opportunities(
     min_score: int = 0,
-    limit: int = 30,
+    limit: int = 100,
     company: dict[str, Any] = Depends(require_entreprise),
 ) -> list[dict[str, Any]]:
     return db.matches_for_company(str(company["id"]), min_score=min_score, limit=limit)
@@ -303,6 +319,32 @@ def get_opportunities(
 @app.get("/digests")
 def get_digests(company: dict[str, Any] = Depends(require_entreprise)) -> list[dict[str, Any]]:
     return db.digests_for_company(str(company["id"]))
+
+
+@app.get("/company/stats")
+def company_stats(company: dict[str, Any] = Depends(require_entreprise)) -> dict[str, Any]:
+    stats = db.company_stats(str(company["id"]))
+    stats["alert_min_score"] = company.get("alert_min_score") or 70
+    return stats
+
+
+@app.get("/notifications")
+def notifications(company: dict[str, Any] = Depends(require_entreprise)) -> list[dict[str, Any]]:
+    return db.notifications_for_company(str(company["id"]))
+
+
+@app.patch("/matches/{match_id}")
+def patch_match(match_id: str, patch: MatchPatch,
+                company: dict[str, Any] = Depends(require_entreprise)) -> dict[str, Any]:
+    if patch.status is not None and patch.status not in {"new", "study", "prep", "submitted"}:
+        raise HTTPException(422, "status invalide (new|study|prep|submitted)")
+    row = db.update_match(
+        match_id, str(company["id"]),
+        saved=patch.saved, status=patch.status, note=patch.note,
+    )
+    if not row:
+        raise HTTPException(404, "Match introuvable pour cette entreprise")
+    return row
 
 
 # -----------------------------------------------------------------------

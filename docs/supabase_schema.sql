@@ -1,7 +1,7 @@
 -- =====================================================================
--- Soukna — schéma Supabase (à exécuter dans le SQL Editor du projet).
--- Équivalent à soukna_graph/db.py:SCHEMA (init_db le crée aussi au
--- démarrage si le rôle postgres le permet).
+-- Soukna — schéma Supabase complet (à exécuter dans le SQL Editor).
+-- Équivalent à soukna_graph/db.py (init_db le crée aussi au démarrage
+-- si le rôle postgres le permet). Idempotent : ré-exécutable sans risque.
 -- =====================================================================
 
 create extension if not exists pgcrypto;
@@ -19,6 +19,8 @@ CREATE TABLE IF NOT EXISTS companies (
     size TEXT DEFAULT 'pme',
     channel_whatsapp BOOLEAN NOT NULL DEFAULT FALSE,
     channel_email BOOLEAN NOT NULL DEFAULT FALSE,
+    max_guarantee INT,
+    alert_min_score INT NOT NULL DEFAULT 70,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -42,15 +44,20 @@ CREATE TABLE IF NOT EXISTS opportunities (
 );
 
 -- Matches (uniques par opportunité × entreprise)
+-- breakdown : {"sector": 0-100, "keywords": ..., "region": ..., "size": ..., "history": ...}
+-- status    : new (flux) | study | prep | submitted (pipeline Mes Dossiers)
 CREATE TABLE IF NOT EXISTS matches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     opportunity_id UUID NOT NULL REFERENCES opportunities(id) ON DELETE CASCADE,
     company_id UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
     match_score INT NOT NULL DEFAULT 0,
     reasons JSONB DEFAULT '[]',
-    verdict TEXT,
+    verdict TEXT,                       -- go | a_etudier | no_go
     risks JSONB DEFAULT '[]',
+    breakdown JSONB DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'new',
+    saved BOOLEAN NOT NULL DEFAULT FALSE,
+    note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (opportunity_id, company_id)
@@ -106,9 +113,34 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ---------------------------------------------------------------------
+-- Migrations idempotentes (bases créées avant l'ajout de ces colonnes)
+-- ---------------------------------------------------------------------
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS max_guarantee INT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS alert_min_score INT NOT NULL DEFAULT 70;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
+
 -- Index de lecture dashboard
 CREATE INDEX IF NOT EXISTS idx_matches_company ON matches(company_id);
 CREATE INDEX IF NOT EXISTS idx_matches_opportunity ON matches(opportunity_id);
+CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
+CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_opportunities_deadline ON opportunities(deadline);
 CREATE INDEX IF NOT EXISTS idx_lg_logs_request ON lg_logs(request_id);
 CREATE INDEX IF NOT EXISTS idx_lg_requests_started ON lg_requests(started_at);
+
+-- ---------------------------------------------------------------------
+-- RLS : le service n'accède à la base QUE via DATABASE_URL (rôle
+-- postgres/service), jamais depuis le navigateur. On verrouille donc
+-- tout par défaut ; aucun client anon/authentifié ne lit ces tables.
+-- ---------------------------------------------------------------------
+ALTER TABLE companies        ENABLE ROW LEVEL SECURITY;
+ALTER TABLE opportunities    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE matches          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE digests          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE pipeline_runs    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lg_requests      ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lg_logs          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE lg_messages_seen ENABLE ROW LEVEL SECURITY;

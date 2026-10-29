@@ -1,0 +1,47 @@
+# =====================================================================
+# Soukna — orchestration complète.
+#   workflow  : LangGraph + FastAPI (port 8000)
+#   dashboard : Next.js landing + dashboards (port 3000)
+# La base est Supabase (DATABASE_URL dans .env) ; un Postgres local est
+# disponible en option : docker compose --profile local-db up
+# =====================================================================
+services:
+  workflow:
+    build: ./workflow
+    env_file: .env
+    environment:
+      - KILL_SWITCH=${KILL_SWITCH:-true}
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  dashboard:
+    build: ./dashboard
+    environment:
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    depends_on:
+      - workflow
+
+  db:
+    image: postgres:16-alpine
+    profiles: ["local-db"]
+    environment:
+      - POSTGRES_USER=soukna
+      - POSTGRES_PASSWORD=soukna
+      - POSTGRES_DB=soukna
+    ports:
+      - "5432:5432"
+    volumes:
+      - soukna_pgdata:/var/lib/postgresql/data
+
+volumes:
+  soukna_pgdata:

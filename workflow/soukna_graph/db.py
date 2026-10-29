@@ -11,19 +11,21 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
 
 from . import config
 
-_pool: psycopg.ConnectionPool | None = None
+_pool: ConnectionPool | None = None
 
 
 def connect() -> psycopg.Connection:
     """Connexion compatible pooler transactionnel Supabase (pgbouncer)."""
     global _pool
     if _pool is None:
-        _pool = psycopg.ConnectionPool(
+        _pool = ConnectionPool(
             config.DATABASE_URL, min_size=1, max_size=5,
-            open=True, row_factory=dict_row, kwargs={"autocommit": True, "prepare_threshold": None},
+            open=True,
+            kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
         )
     return _pool.getconn()
 
@@ -63,6 +65,8 @@ CREATE TABLE IF NOT EXISTS companies (
     size TEXT DEFAULT 'pme',
     channel_whatsapp BOOLEAN NOT NULL DEFAULT FALSE,
     channel_email BOOLEAN NOT NULL DEFAULT FALSE,
+    max_guarantee INT,
+    alert_min_score INT NOT NULL DEFAULT 70,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -90,7 +94,10 @@ CREATE TABLE IF NOT EXISTS matches (
     reasons JSONB DEFAULT '[]',
     verdict TEXT,
     risks JSONB DEFAULT '[]',
+    breakdown JSONB DEFAULT '{}',
     status TEXT NOT NULL DEFAULT 'new',
+    saved BOOLEAN NOT NULL DEFAULT FALSE,
+    note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (opportunity_id, company_id)
@@ -141,11 +148,23 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
 );
 """
 
+# Colonnes ajoutées après coup : idempotent sur une base déjà déployée.
+MIGRATIONS = """
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS max_guarantee INT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS alert_min_score INT NOT NULL DEFAULT 70;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
+CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
+CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
+"""
+
 
 def init_db() -> None:
     conn = connect()
     try:
         conn.execute(SCHEMA)
+        conn.execute(MIGRATIONS)
     finally:
         putconn(conn)
 
@@ -196,13 +215,19 @@ def set_channel_prefs(company_id: str, whatsapp: bool, email: bool) -> None:
     )
 
 
-def update_company_profile(company_id: str, *, sectors: list[str] | None = None,
+def update_company_profile(company_id: str, *, name: str | None = None,
+                           sectors: list[str] | None = None,
                            keywords: list[str] | None = None,
                            regions: list[str] | None = None,
-                           size: str | None = None) -> None:
+                           size: str | None = None,
+                           max_guarantee: int | None = None,
+                           alert_min_score: int | None = None) -> None:
     """Mise à jour partielle du profil (seuls les champs fournis changent)."""
     sets: list[str] = []
     params: list[Any] = []
+    if name is not None:
+        sets.append("name = %s")
+        params.append(name)
     if sectors is not None:
         sets.append("sectors = %s")
         params.append(sectors)
@@ -215,6 +240,12 @@ def update_company_profile(company_id: str, *, sectors: list[str] | None = None,
     if size is not None:
         sets.append("size = %s")
         params.append(size)
+    if max_guarantee is not None:
+        sets.append("max_guarantee = %s")
+        params.append(max_guarantee)
+    if alert_min_score is not None:
+        sets.append("alert_min_score = %s")
+        params.append(alert_min_score)
     if not sets:
         return
     params.append(company_id)
@@ -288,20 +319,23 @@ def set_verdict(opportunity_id: str, company_id: str, verdict: str,
 
 
 def upsert_match(*, opportunity_id: str, company_id: str, match_score: int,
-                 reasons: list[str], verdict: str, risks: list[str]) -> bool:
+                 reasons: list[str], verdict: str, risks: list[str],
+                 breakdown: dict[str, int] | None = None) -> bool:
     rows = query(
         """
-        INSERT INTO matches (opportunity_id, company_id, match_score, reasons, verdict, risks)
-        VALUES (%s, %s, %s, %s, %s, %s)
+        INSERT INTO matches (opportunity_id, company_id, match_score, reasons,
+                             verdict, risks, breakdown)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (opportunity_id, company_id) DO UPDATE SET
             match_score = EXCLUDED.match_score, reasons = EXCLUDED.reasons,
             verdict = EXCLUDED.verdict, risks = EXCLUDED.risks,
-            status = 'new', updated_at = now()
+            breakdown = EXCLUDED.breakdown, updated_at = now()
         RETURNING (xmax = 0) AS inserted
         """,
         (opportunity_id, company_id, match_score,
          json.dumps(reasons, ensure_ascii=False), verdict,
-         json.dumps(risks, ensure_ascii=False)),
+         json.dumps(risks, ensure_ascii=False),
+         json.dumps(breakdown or {}, ensure_ascii=False)),
     )
     return bool(rows and rows[0]["inserted"])
 
@@ -318,6 +352,96 @@ def matches_for_company(company_id: str, *, min_score: int = 0, limit: int = 30)
         """,
         (company_id, min_score, limit),
     )
+
+
+def update_match(match_id: str, company_id: str, *, saved: bool | None = None,
+                 status: str | None = None, note: str | None = None) -> dict[str, Any] | None:
+    """Met à jour le dossier d'une entreprise pour UN de ses matches."""
+    if saved is True and status is None:
+        status = "study"  # sauvegarde par étoile => entre dans le pipeline "En étude"
+    if saved is False:
+        status = "new"    # retrait du dossier => retour au flux
+    sets: list[str] = []
+    params: list[Any] = []
+    if saved is not None:
+        sets.append("saved = %s")
+        params.append(saved)
+    if status is not None:
+        sets.append("status = %s")
+        params.append(status)
+    if note is not None:
+        sets.append("note = %s")
+        params.append(note)
+    if not sets:
+        return get_match(match_id, company_id)
+    params.extend([match_id, company_id])
+    rows = query(
+        f"UPDATE matches SET {', '.join(sets)}, updated_at = now() "
+        "WHERE id = %s AND company_id = %s RETURNING *",
+        tuple(params),
+    )
+    return rows[0] if rows else None
+
+
+def get_match(match_id: str, company_id: str) -> dict[str, Any] | None:
+    rows = query(
+        """
+        SELECT m.*, o.title, o.buyer, o.city, o.region, o.sector, o.deadline,
+               o.amount, o.source_ref, o.url, o.source
+        FROM matches m JOIN opportunities o ON o.id = m.opportunity_id
+        WHERE m.id = %s AND m.company_id = %s
+        """,
+        (match_id, company_id),
+    )
+    return rows[0] if rows else None
+
+
+def company_stats(company_id: str) -> dict[str, Any]:
+    """KPIs du tableau de bord entreprise (une ligne par entreprise)."""
+    return query(
+        """
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE m.verdict = 'go') AS go,
+               count(*) FILTER (WHERE m.verdict = 'a_etudier') AS study,
+               count(*) FILTER (WHERE m.verdict = 'no_go') AS nogo,
+               count(*) FILTER (WHERE m.saved) AS saved,
+               count(*) FILTER (WHERE m.created_at > now() - INTERVAL '24 hours') AS new_24h
+        FROM matches m WHERE m.company_id = %s
+        """,
+        (company_id,),
+    )[0]
+
+
+def notifications_for_company(company_id: str, limit: int = 10) -> list[dict[str, Any]]:
+    """Notifications calculées : nouveaux matchs forts + échéances proches."""
+    alert_min = (get_company(company_id) or {}).get("alert_min_score") or 70
+    fresh = query(
+        """
+        SELECT 'match' AS kind, m.match_score AS score, o.title, o.city,
+               m.created_at
+        FROM matches m JOIN opportunities o ON o.id = m.opportunity_id
+        WHERE m.company_id = %s AND m.verdict = 'go'
+              AND m.match_score >= %s
+              AND m.created_at > now() - INTERVAL '7 days'
+        ORDER BY m.created_at DESC LIMIT %s
+        """,
+        (company_id, alert_min, limit),
+    )
+    deadlines = query(
+        """
+        SELECT 'deadline' AS kind, m.match_score AS score, o.title, o.city,
+               m.updated_at AS created_at, o.deadline,
+               GREATEST(0, (o.deadline - CURRENT_DATE)) AS days_left
+        FROM matches m JOIN opportunities o ON o.id = m.opportunity_id
+        WHERE m.company_id = %s AND m.saved
+              AND o.deadline BETWEEN CURRENT_DATE AND CURRENT_DATE + 7
+        ORDER BY o.deadline ASC LIMIT %s
+        """,
+        (company_id, limit),
+    )
+    items = fresh + deadlines
+    items.sort(key=lambda r: r["created_at"] or "", reverse=True)
+    return items[:limit]
 
 
 def save_digest(*, company_id: str, content: str, channels: list[str]) -> bool:

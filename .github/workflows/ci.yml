@@ -1,0 +1,71 @@
+# =====================================================================
+# CI Soukna — même philosophie que le projet clinique :
+#   • structure-and-unit : à chaque push/PR (aucun réseau, aucun secret)
+#   • live-eval : MANUEL (workflow_dispatch) — 10 cas sur le vrai graphe
+#     + juge LLM, KILL_SWITCH forcé à true (jamais d'envoi réel en CI)
+# =====================================================================
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  structure-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r workflow/requirements.txt
+
+      - name: Structure (fichiers, Agent Cards, compose, .env.example)
+        run: python workflow/scripts/check_structure.py
+
+      - name: Lint (ruff)
+        run: ruff check workflow/
+
+      - name: Tests unitaires hors-ligne (pytest)
+        working-directory: workflow
+        env:
+          KILL_SWITCH: "true"
+        run: pytest tests -q
+
+  live-eval:
+    if: github.event_name == 'workflow_dispatch'
+    needs: structure-and-unit
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      MISTRAL_MODEL: codestral-latest
+      KILL_SWITCH: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r workflow/requirements.txt
+
+      - name: Évaluation live (10 cas + juge LLM)
+        working-directory: workflow
+        run: python scripts/eval_suite.py
+
+      - name: Upload rapport
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: workflow/artifacts/eval_report.json
+          if-no-files-found: warn
