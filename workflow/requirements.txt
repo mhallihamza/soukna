@@ -1,0 +1,15 @@
+# Soukna workflow — LangGraph + FastAPI (versions permissives ; CI installe)
+langgraph>=0.2.60
+langchain-core>=0.3.0
+langchain-mistralai>=0.2.0
+psycopg[binary]>=3.2
+python-dotenv>=1.0
+requests>=2.31
+fastapi>=0.115
+uvicorn[standard]>=0.30
+
+# Testing
+pytest>=8.0
+httpx>=0.27  # TestClient de FastAPI
+ruff>=0.5
+pyyaml>=6.0  # check_structure.py : Agent Cards + docker-compose

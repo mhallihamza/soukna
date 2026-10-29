@@ -1,0 +1,45 @@
+# =====================================================================
+# Agent Card — Digest (synthèse quotidienne multi-canaux)
+# =====================================================================
+carte:
+  agent: SouknaDigestAgent
+  slug: soukna-digest-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + WhatsApp Cloud API + SMTP + Postgres"
+  runtime: "Nœud digest du StateGraph"
+
+objectif: >
+  Rédiger la synthèse quotidienne (opportunités à examiner, Match, verdict,
+  échéances) et la livrer UNIQUEMENT sur les canaux que l'entreprise a
+  activés dans ses préférences : whatsapp, email, dashboard. Le dashboard
+  est toujours alimenté (historique consultable), les canaux externes sont
+  opt-in.
+
+outils:
+  - "Templates déterministes (fr) — pas de génération libre côté patient"
+  - "tools/whatsapp.py : envoi Meta + kill switch + liste blanche"
+  - "tools/emailer.py : SMTP starttls (désactivé si SMTP_HOST vide)"
+  - "Postgres : table digests (historique) + canal_par_préférences entreprise"
+
+entrees:
+  - champ: digest_items
+    description: "Opportunités matchées + verdicts du jour"
+  - champ: channel_prefs
+    description: "Préférences de l'entreprise : {whatsapp: bool, email: bool}"
+
+sorties:
+  - champ: digest_text
+    description: "Synthèse texte (fr) prête à livrer"
+  - champ: delivered
+    description: "Canaux réellement utilisés : [dashboard, whatsapp?, email?]"
+
+limites:
+  - "Aucun envoi sur un canal désactivé par l'entreprise — même en production."
+  - "Kill switch : whatsapp hors liste blanche est silencieux (traçable)."
+  - "Email sans SMTP configuré : jamais d'erreur bloquante, canal simplement ignoré."
+
+securite:
+  - "Chaque livraison trace canal + statut dans lg_logs et la table digests."
+  - "Le digest rappelle systématiquement : décision humaine, pièces officielles."

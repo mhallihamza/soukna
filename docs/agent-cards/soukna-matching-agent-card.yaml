@@ -1,0 +1,40 @@
+# =====================================================================
+# Agent Card — Matching (adéquation opportunité ↔ profil)
+# =====================================================================
+carte:
+  agent: SouknaMatchingAgent
+  slug: soukna-matching-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + Mistral (codestral-latest) + heuristique"
+  runtime: "Nœud matching du StateGraph"
+
+objectif: >
+  Comparer chaque opportunité non encore analysée au profil de l'entreprise
+  (secteur, mots-clés, régions, taille) et produire un score Match /100 avec
+  les justifications (adéquation sectorielle, géographique, taille du marché).
+
+outils:
+  - "LLM : scoring JSON structuré (prompt MATCHING_SYSTEM)"
+  - "Heuristique de repli : recoupement mots-clés / secteur / région"
+  - "Postgres : table matches (upsert par opportunity_id + company_id)"
+
+entrees:
+  - champ: opportunities
+    description: "Opportunités non analysées (depuis l'état du graphe)"
+  - champ: company_profile
+    description: "Profil : secteurs, mots-clés, régions, taille, capacités"
+
+sorties:
+  - champ: matches
+    description: "Liste {opportunity_id, match_score, reasons[]} (0-100)"
+
+limites:
+  - "Score INDICATIF : ne garantit ni éligibilité ni attribution."
+  - "Ne lit pas les pièces officielles du dossier (DCE)."
+  - "Sans clé LLM : heuristique mot-clé (scores plus grossiers, mode annoncé)."
+
+securite:
+  - "Température 0.0 ; sortie JSON validée ; repli heuristique sur erreur."
+  - "Chaque score tracé dans lg_logs avec le mode utilisé (mistral/heuristic)."

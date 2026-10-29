@@ -1,0 +1,42 @@
+# =====================================================================
+# Agent Card — Supervisor (intake + routage)
+# =====================================================================
+carte:
+  agent: Supervisor
+  slug: supervisor
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + FastAPI (conteneur workflow)"
+  runtime: "Nœuds intake + conditional_edges du StateGraph"
+
+objectif: >
+  Porte d'entrée de chaque message patient : ignorer les événements
+  non-conversationnels (acks WhatsApp), garantir l'idempotence par message_id
+  et router vers l'orchestrateur. Aucun agent ne s'exécute deux fois.
+
+outils:
+  - "Postgres : table lg_messages_seen (déduplication)"
+  - "Postgres : table lg_requests (trace de bout en bout)"
+  - "LangGraph : conditional_edges (process_message / duplicate_message / ignored_event)"
+
+entrees:
+  - champ: message
+    description: "Texte du message entrant (webhook Meta ou API interne)"
+  - champ: sender_phone
+    description: "Numéro de l'expéditeur (identifiant de thread)"
+  - champ: message_id
+    description: "Identifiant unique du message (wamid)"
+
+sorties:
+  - champ: route
+    valeurs: [process_message, duplicate_message, ignored_event]
+
+limites:
+  - "Un message dupliqué ne déclenche AUCUN agent et ne génère AUCUNE réponse."
+  - "Aucune lecture du contenu du message à ce stade (aucun LLM)."
+  - "Si message_id est absent, la déduplication est neutralisée (mode dégradé)."
+
+securite:
+  - "Chaque exécution trace : request_id, agent, durée, lg_logs."
+  - "Le kill switch s'applique en aval (tools/whatsapp.py), pas ici."

@@ -1,0 +1,44 @@
+# =====================================================================
+# Agent Card — Sources (ingestion des opportunités)
+# =====================================================================
+carte:
+  agent: SouknaSourcesAgent
+  slug: soukna-sources-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + requests + Postgres"
+  runtime: "Nœud sources du StateGraph (synchrone, sans LLM obligatoire)"
+
+objectif: >-
+  Collecter les consultations en cours du portail marchespublics.gov.ma
+  via la recherche rapide du menu gauche (1 terme représentatif par
+  secteur Soukna — stratégie validée en live, voir runbook), normaliser
+  les résultats (référence, objet, acheteur, lieu, échéance, estimation,
+  secteur) et les insérer en base sans doublon. Repli automatique sur
+  les opportunités seed si le portail est indisponible ou
+  PORTAL_ENABLED=false.
+
+outils:
+  - "workflow/soukna_graph/tools/portal.py : scraper POST (postback PRADO)"
+  - "Postgres : table opportunities (upsert par source_ref)"
+  - "Seed : fixtures réalistes pour démo et tests hors-ligne"
+
+entrees:
+  - champ: run_id
+    description: "Identifiant d'exécution du pipeline"
+
+sorties:
+  - champ: ingested
+    description: "Nombre d'opportunités nouvelles ou mises à jour"
+  - champ: source_mode
+    valeurs: [portal, seed, mixed]
+
+limites:
+  - "Ne modifie JAMAIS une opportunité déjà analysée (verdict figé)."
+  - "Ne scrape pas les pièces du dossier (DCE) — analyse indicative only."
+  - "Le portail n'offre pas d'API publique : structure HTML susceptible de changer."
+
+securite:
+  - "Timeouts stricts + 1 seule tentative : un échec portail ne bloque pas le pipeline."
+  - "Chaque ingestion trace source_mode dans lg_logs (portal / seed / mixed)."

@@ -1,0 +1,41 @@
+# =====================================================================
+# Agent Card — Verdict (GO / À ÉTUDIER / NO-GO + risques)
+# =====================================================================
+carte:
+  agent: SouknaVerdictAgent
+  slug: soukna-verdict-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + Mistral (codestral-latest) + heuristique"
+  runtime: "Nœud verdict du StateGraph"
+
+objectif: >
+  Combiner Match + faisabilité + risques pour produire un verdict indicatif :
+  GO (à considérer en priorité), A_ETUDIER (vérifications nécessaires),
+  NO_GO (peu adapté en l'état) — avec la liste des contraintes à vérifier
+  (délai de réponse, garantie provisoire, qualifications, visite obligatoire,
+  documents requis, conditions de paiement).
+
+outils:
+  - "LLM : verdict JSON structuré (prompt VERDICT_SYSTEM)"
+  - "Heuristique de repli : seuils de score + détection de mots-clés de risque"
+  - "Postgres : colonnes verdict/risks de la table matches"
+
+entrees:
+  - champ: matches
+    description: "Scores Match produits par l'agent matching"
+  - champ: opportunities
+    description: "Détails bruts (échéance, montant, objet) pour détecter les risques"
+
+sorties:
+  - champ: verdicts
+    description: "Liste {opportunity_id, verdict, risks[]} — verdict ∈ {go, a_etudier, no_go}"
+
+limites:
+  - "Le verdict N'EST JAMAIS un avis juridique ni une garantie d'éligibilité."
+  - "Le document officiel du dossier fait toujours foi (rappelé au patient)."
+  - "NO_GO n'interdit rien : c'est une aide à la priorisation, pas un filtre bloquant."
+
+securite:
+  - "Verdict + risques tracés dans lg_logs ; décision humaine rappelée dans chaque digest."

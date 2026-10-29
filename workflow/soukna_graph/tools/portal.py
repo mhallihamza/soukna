@@ -1,0 +1,225 @@
+# =====================================================================
+# Scraper du portail marchespublics.gov.ma (carte soukna-sources-agent).
+#
+# Stratégie VALIDÉE EN LIVE (2026-10-29) :
+#   • La recherche avancée est un postback PRADO dont les critères
+#     (dates, catégories, domaines) sont figés dans PRADO_PAGESTATE :
+#     poster des critères modifiés est ignoré (239 785 résultats non
+#     filtrés, triés par fin d'affichage → annonces PV 2028 en tête).
+#   • EN REVANCHE, la **recherche rapide** du menu gauche
+#     (`ctl0$menuGaucheEntreprise$quickSearch` + postback
+#     `ctl0$menuGaucheEntreprise$imageOk`) fonctionne parfaitement :
+#     résultats pertinents, échéances réelles, lieux d'exécution.
+#   → On lance une recherche rapide par secteur Soukna (1 terme
+#     représentatif), on agrège, déduplique, trie par échéance
+#     croissante. Un terme en échec n'empêche pas les autres ; si tout
+#     échoue, l'exception remonte et le nœud sources replie sur les
+#     seeds (runbook : PORTAL_ENABLED=false pour contention).
+# =====================================================================
+from __future__ import annotations
+
+import re
+import time
+from datetime import date
+from typing import Any
+from unicodedata import normalize
+
+import requests
+
+from .. import config
+
+BASE = config.PORTAL_BASE
+SEARCH_PAGE = f"{BASE}/index.php"
+SEARCH_PARAMS = {"page": "entreprise.EntrepriseAdvancedSearch", "AllCons": None,
+                 "EnCours": None, "searchAnnCons": None}
+QUICK_SEARCH_FIELD = "ctl0$menuGaucheEntreprise$quickSearch"
+QUICK_SEARCH_BUTTON = "ctl0$menuGaucheEntreprise$imageOk"
+UA = {"User-Agent": "Mozilla/5.0 (compatible; SouknaBot/1.0; +https://soukna.ma)"}
+
+# Secteur Soukna → terme de recherche rapide représentatif (validé live :
+# informatique=232, travaux=2310, fourniture=437, maintenance=250,
+# étude=506 résultats, échéances réelles de novembre/décembre 2026).
+SEARCH_TERMS: dict[str, str] = {
+    "Informatique": "informatique",
+    "BTP": "travaux",
+    "Fournitures": "fourniture",
+    "Services et maintenance": "maintenance",
+    "Conseil et études": "étude",
+}
+
+MONTHS_FR = {
+    "janv": 1, "fevr": 2, "févr": 2, "mars": 3, "avr": 4, "mai": 5, "juin": 6,
+    "juil": 7, "aout": 8, "août": 8, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    "déc": 12,
+}
+
+
+def _parse_form(html: str) -> dict[str, str]:
+    """Champs hidden + text du formulaire principal (ordre d'attributs libre)."""
+    fields: dict[str, str] = {}
+    form_m = re.search(r'<form[^>]*id="ctl0_ctl2"[^>]*>(.*?)</form>', html, re.S)
+    scope = form_m.group(1) if form_m else html
+    for m in re.finditer(r"<input\b[^>]*>", scope):
+        tag = m.group(0)
+        name_m = re.search(r'name="([^"]+)"', tag)
+        if not name_m:
+            continue
+        type_m = re.search(r'type="([^"]+)"', tag)
+        itype = (type_m.group(1).lower() if type_m else "text")
+        if itype not in {"hidden", "text"}:
+            continue
+        value_m = re.search(r'value="([^"]*)"', tag)
+        fields[name_m.group(1)] = value_m.group(1) if value_m else ""
+    return fields
+
+
+def _strip_tags(block: str) -> list[str]:
+    text = re.sub(r"<script.*?</script>", " ", block, flags=re.S)
+    text = re.sub(r"<[^>]+>", "\n", text)
+    lines = [re.sub(r"\s+", " ", line).strip() for line in text.splitlines()]
+    return [line for line in lines if line]
+
+
+def _after_label(lines: list[str], label: str, stops: tuple[str, ...]) -> str:
+    """Texte qui suit un libellé (« Objet : », « Acheteur public : »…).
+
+    Le portail découpe les libellés sur deux lignes (« Objet » puis «: »)
+    ou les écrit sur une seule — les deux formes sont gérées.
+    """
+    residues = {":", "...", "…", "•"}
+    for i, line in enumerate(lines):
+        m = re.match(label + r"\s*:?\s*(.*)$", line, re.I)
+        if m:
+            same_line = m.group(1).strip()
+            j = i + 1
+            while j < len(lines) and lines[j] in residues:
+                j += 1
+            out: list[str] = []
+            if same_line and same_line not in residues:
+                out.append(same_line)
+            for nxt in lines[j:]:
+                if not nxt or nxt in residues or any(nxt.startswith(s) for s in stops):
+                    break
+                out.append(nxt)
+            return " ".join(out).strip()
+    return ""
+
+
+def _parse_deadline(text: str) -> str | None:
+    m = re.search(r"(\d{1,2})\s+([A-Za-zÀ-ÿ]{3,5})\.?\s+(\d{4})", text)
+    if not m:
+        return None
+    month_key = normalize("NFKD", m.group(2).lower()).encode("ascii", "ignore").decode()[:4]
+    month = MONTHS_FR.get(month_key)
+    if not month:
+        return None
+    try:
+        return date(int(m.group(3)), month, int(m.group(1))).isoformat()
+    except ValueError:
+        return None
+
+
+def _parse_rows(html: str) -> list[dict[str, Any]]:
+    """Un bloc de résultat par index N (`...tableauResultSearch_ctlN_...`)."""
+    items: list[dict[str, Any]] = []
+    for n in range(60):
+        marker = f"ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n}_"
+        start = html.find(marker)
+        if start == -1:
+            break
+        next_marker = f"ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n + 1}_"
+        end = html.find(next_marker, start)
+        block = html[start:end if end != -1 else start + 25000]
+        lines = _strip_tags(block)
+
+        ref_m = re.search(
+            rf'id="ctl0_CONTENU_PAGE_resultSearch_tableauResultSearch_ctl{n}_referencem"[^>]*>([^<]+)<',
+            block,
+        )
+        link_m = re.search(r'href="([^"]*EntrepriseDetailsConsultation[^"]*)"', block)
+        title = _after_label(lines, r"Objet\b", ("Détail", "Estimation", "Acheteur", "Date"))
+        buyer = _after_label(lines, r"Acheteur public\b", ("Estimation", "Date", "Lieu"))
+        place = _after_label(lines, r"Lieu d.exécution\b", ("AOO", "AOJR", "Référence", "Détail"))
+        amount = _after_label(lines, r"Estimation TTC[^:]*", ("Acheteur", "Date", "Lieu"))
+        deadline = _parse_deadline(block)
+
+        ref = (ref_m.group(1).strip() if ref_m else "")
+        if not ref and link_m:
+            idm = re.search(r"refConsultation=(\d+)", link_m.group(1))
+            ref = f"ref{idm.group(1)}" if idm else f"blk{n}"
+        source_ref = f"portal:{ref}"
+
+        city = place.title() if place else ""
+        # Le portail affiche la « date de fin d'affichage » (annonces PV
+        # restées en ligne des années) : au-delà de ~13 mois, date non
+        # fiable → None (l'échéance réelle est sur la page de détail, v2).
+        if deadline:
+            try:
+                dl_date = date.fromisoformat(deadline)
+                if (dl_date - date.today()).days > 400:
+                    deadline = None
+            except ValueError:
+                deadline = None
+        href = link_m.group(1) if link_m else ""
+        url = href if href.startswith("http") else (BASE + href if href else "")
+        items.append({
+            "source_ref": source_ref,
+            "title": title[:250] or f"Consultation {ref}",
+            "buyer": buyer[:180],
+            "city": city,
+            "region": city,
+            "sector": "",
+            "domain_code": "",
+            "deadline": deadline,
+            "amount": amount[:80],
+            "url": url,
+            "raw": {"ref": ref},
+        })
+    return items
+
+
+def _quick_search(term: str) -> list[dict[str, Any]]:
+    """Recherche rapide du menu gauche : GET (état) → POST (postback)."""
+    with requests.Session() as session:
+        session.headers.update(UA)
+        r0 = session.get(SEARCH_PAGE, params=SEARCH_PARAMS,
+                         timeout=config.PORTAL_TIMEOUT_S)
+        r0.raise_for_status()
+        fields = _parse_form(r0.text)
+        if "PRADO_PAGESTATE" not in fields:
+            raise RuntimeError("portail : PRADO_PAGESTATE introuvable (structure changée ?)")
+
+        fields[QUICK_SEARCH_FIELD] = term
+        fields[QUICK_SEARCH_BUTTON] = "OK"
+        fields["PRADO_POSTBACK_TARGET"] = QUICK_SEARCH_BUTTON
+
+        r1 = session.post(SEARCH_PAGE, params=SEARCH_PARAMS, data=fields,
+                          timeout=config.PORTAL_TIMEOUT_S)
+        r1.raise_for_status()
+        return _parse_rows(r1.text)
+
+
+def fetch_consultations(max_items: int = 30, per_term: int = 10) -> list[dict[str, Any]]:
+    """Agrège les consultations par secteur (1 recherche rapide chacun).
+
+    Résilient : un terme en échec n'empêche pas les autres ; une exception
+    n'est levée que si AUCUN terme ne aboutit (repli seeds appelant).
+    """
+    collected: dict[str, dict[str, Any]] = {}
+    for sector, term in SEARCH_TERMS.items():
+        try:
+            items = _quick_search(term)
+        except (requests.RequestException, RuntimeError):
+            continue
+        for item in items[:per_term]:
+            item["sector"] = sector
+            item["source"] = "portal"
+            collected.setdefault(str(item["source_ref"]), item)
+        time.sleep(1.0)  # politesse envers le portail
+    if not collected:
+        raise RuntimeError("portail : aucun résultat sur tous les termes de recherche")
+    ranked = sorted(
+        collected.values(),
+        key=lambda x: (x.get("deadline") is None, x.get("deadline") or ""),
+    )
+    return ranked[:max_items]
