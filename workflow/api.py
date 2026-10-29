@@ -36,6 +36,15 @@ GRAPH = build_graph()
 def startup() -> None:
     try:
         db.init_db()
+        # Seed du compte admin en base (table users) si vide : les
+        # credentials dashboard vivent en DB, l'env ne sert qu'au bootstrap.
+        if db.count_users() == 0:
+            db.create_user(
+                config.ADMIN_USERNAME,
+                _hash_password(config.ADMIN_PASSWORD),
+                role="admin",
+            )
+            print(f"[soukna] admin user créé en base : {config.ADMIN_USERNAME}")
     except Exception as exc:  # Supabase indisponible : l'API reste debout
         print(f"[soukna] init_db warning: {exc}")
 
@@ -116,8 +125,20 @@ class CompanyBody(BaseModel):
     keywords: list[str] = []
     regions: list[str] = []
     size: str = "pme"
+    plan: str = "decouverte"
     channel_whatsapp: bool = False
     channel_email: bool = False
+
+
+class CompanyAdminPatch(BaseModel):
+    plan: str | None = None    # decouverte | pro | business
+    status: str | None = None  # active | suspended
+
+
+class ConfigPatch(BaseModel):
+    portal_enabled: bool | None = None
+    llm_enabled: bool | None = None
+    kill_switch: bool | None = None
 
 
 class ProfilePatch(BaseModel):
@@ -141,18 +162,34 @@ class MatchPatch(BaseModel):
 @app.post("/auth/login")
 def login(body: LoginBody) -> dict[str, Any]:
     exp = time.time() + config.TOKEN_TTL_HOURS * 3600
+    # Le formulaire n'a qu'un champ : username sert aussi d'email entreprise.
+    email = body.email or body.username
+
+    # 1) Users dashboard (table users, rôles en base).
+    if email:
+        user = db.get_user_by_email(email)
+        if user and user.get("password_hash") == _hash_password(body.password):
+            return {"token": _sign({
+                "role": user.get("role", "admin"), "sub": email, "exp": exp,
+            }), "role": user.get("role", "admin")}
+
+    # 2) Repli admin via .env (bootstrap avant premier seed).
     if body.username and body.username == config.ADMIN_USERNAME \
             and body.password == config.ADMIN_PASSWORD:
         return {"token": _sign({"role": "admin", "sub": body.username, "exp": exp}),
                 "role": "admin"}
-    if body.email:
-        rows = db.query("SELECT * FROM companies WHERE email = %s", (body.email,))
+
+    # 3) Entreprises (table companies).
+    if email:
+        rows = db.query("SELECT * FROM companies WHERE email = %s", (email,))
         if rows and rows[0].get("password_hash") == _hash_password(body.password):
             company = rows[0]
+            if company.get("status") == "suspended":
+                raise HTTPException(403, "Compte suspendu — contactez Soukna")
             return {
                 "token": _sign({
                     "role": "entreprise",
-                    "sub": body.email,
+                    "sub": email,
                     "company_id": str(company["id"]),
                     "exp": exp,
                 }),
@@ -370,7 +407,47 @@ def create_company(body: CompanyBody,
         size=body.size,
     )
     db.set_channel_prefs(str(company["id"]), body.channel_whatsapp, body.channel_email)
-    return _public_company(company)
+    if body.plan != "decouverte":
+        db.update_company_admin(str(company["id"]), plan=body.plan)
+    return _public_company(db.get_company(str(company["id"])) or company)
+
+
+@app.patch("/companies/{company_id}")
+def patch_company(company_id: str, patch: CompanyAdminPatch,
+                  _user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    if patch.plan is not None and patch.plan not in {"decouverte", "pro", "business"}:
+        raise HTTPException(422, "plan invalide (decouverte|pro|business)")
+    if patch.status is not None and patch.status not in {"active", "suspended"}:
+        raise HTTPException(422, "status invalide (active|suspended)")
+    row = db.update_company_admin(company_id, plan=patch.plan, status=patch.status)
+    if not row:
+        raise HTTPException(404, "Entreprise introuvable")
+    return _public_company(row)
+
+
+@app.get("/admin/config")
+def get_admin_config(_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    return {
+        "portal_enabled": bool(config.PORTAL_ENABLED),
+        "llm_enabled": bool(config.LLM_ENABLED),
+        "kill_switch": bool(config.KILL_SWITCH),
+        "llm_key_present": bool(config.MISTRAL_API_KEY),
+        "email_ready": config.email_ready(),
+        "whatsapp_ready": bool(config.WHATSAPP_TOKEN and config.WHATSAPP_PHONE_NUMBER_ID),
+    }
+
+
+@app.patch("/admin/config")
+def patch_admin_config(patch: ConfigPatch,
+                       _user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Interrupteurs runtime (sans redémarrage, non persistés en base)."""
+    if patch.portal_enabled is not None:
+        config.PORTAL_ENABLED = patch.portal_enabled
+    if patch.llm_enabled is not None:
+        config.LLM_ENABLED = patch.llm_enabled
+    if patch.kill_switch is not None:
+        config.KILL_SWITCH = patch.kill_switch
+    return get_admin_config()
 
 
 @app.get("/observability")
@@ -382,6 +459,52 @@ def observability(
         "requests": db.requests_since(hours),
         "logs": db.logs_since(hours),
     }
+
+
+@app.get("/observability/summary")
+def observability_summary(
+    hours: float = 24,
+    _user: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    """Agrégats pour l'onglet Observabilité : agents, latences, pipeline."""
+    requests = db.request_stats(hours)
+    agents = db.agent_stats(hours)
+    last_run = db.query(
+        "SELECT * FROM pipeline_runs ORDER BY started_at DESC LIMIT 1"
+    )
+    return {
+        "window_hours": hours,
+        "requests": requests,
+        "agents": agents,
+        "last_pipeline_run": last_run[0] if last_run else None,
+        "counts": db.query(
+            """
+            SELECT (SELECT count(*) FROM companies) AS companies,
+                   (SELECT count(*) FROM companies WHERE status = 'active') AS companies_active,
+                   (SELECT count(*) FROM companies WHERE plan IN ('pro','business')) AS companies_paying,
+                   (SELECT count(*) FROM opportunities) AS opportunities,
+                   (SELECT count(*) FROM matches) AS matches,
+                   (SELECT count(*) FROM digests) AS digests,
+                   (SELECT count(*) FROM waitlist) AS waitlist
+            """
+        )[0],
+    }
+
+
+@app.get("/observability/requests/{request_id}/logs")
+def observability_trace(
+    request_id: str,
+    _user: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    """Trace détaillée d'une requête : étapes agent par agent."""
+    rows = db.query(
+        "SELECT id, message_id, sender_phone, route, outcome, error, "
+        "started_at, finished_at, latency_ms FROM lg_requests WHERE id = %s",
+        (request_id,),
+    )
+    if not rows:
+        raise HTTPException(404, "Requête introuvable")
+    return {"request": rows[0], "steps": db.logs_for_request(request_id)}
 
 
 @app.get("/stats")

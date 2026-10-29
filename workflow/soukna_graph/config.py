@@ -14,9 +14,13 @@ DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://soukna:soukna@localhost:5
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "codestral-latest")
 
+# Interrupteur runtime (admin dashboard) : couper le LLM bascule tout
+# le scoring sur le mode heuristique sans redémarrer le service.
+LLM_ENABLED = True
+
 
 def llm_ready() -> bool:
-    return bool(MISTRAL_API_KEY)
+    return bool(MISTRAL_API_KEY) and LLM_ENABLED
 
 
 # --- Canal WhatsApp (Cloud API Meta) ---------------------------------

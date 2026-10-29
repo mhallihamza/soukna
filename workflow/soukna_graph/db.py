@@ -67,6 +67,8 @@ CREATE TABLE IF NOT EXISTS companies (
     channel_email BOOLEAN NOT NULL DEFAULT FALSE,
     max_guarantee INT,
     alert_min_score INT NOT NULL DEFAULT 70,
+    plan TEXT NOT NULL DEFAULT 'decouverte',
+    status TEXT NOT NULL DEFAULT 'active',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS opportunities (
@@ -146,17 +148,51 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
     message_id TEXT PRIMARY KEY,
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS waitlist (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    whatsapp TEXT,
+    sector TEXT,
+    company_size TEXT,
+    lang TEXT DEFAULT 'fr',
+    consent BOOLEAN NOT NULL DEFAULT TRUE,
+    source TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 # Colonnes ajoutées après coup : idempotent sur une base déjà déployée.
 MIGRATIONS = """
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS max_guarantee INT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS alert_min_score INT NOT NULL DEFAULT 70;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'decouverte';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
 CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
 CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
+"""
+
+# Le formulaire de la landing écrit dans waitlist via la clé publishable
+# (rôle anon) : insertion seule autorisée, aucune lecture.
+WAITLIST_POLICY = """
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'waitlist'
+                   AND policyname = 'anon_insert_waitlist') THEN
+        CREATE POLICY anon_insert_waitlist ON waitlist
+            FOR INSERT TO anon WITH CHECK (true);
+    END IF;
+END $$;
 """
 
 
@@ -165,6 +201,7 @@ def init_db() -> None:
     try:
         conn.execute(SCHEMA)
         conn.execute(MIGRATIONS)
+        conn.execute(WAITLIST_POLICY)
     finally:
         putconn(conn)
 
@@ -534,6 +571,98 @@ def logs_since(hours: float = 24, limit: int = 300) -> list[dict[str, Any]]:
 def start_pipeline_run() -> str:
     rows = query("INSERT INTO pipeline_runs DEFAULT VALUES RETURNING id")
     return rows[0]["id"]
+
+
+# -----------------------------------------------------------------------
+# Users (credentials dashboard en base) + gestion admin des entreprises
+# -----------------------------------------------------------------------
+
+def get_user_by_email(email: str) -> dict[str, Any] | None:
+    rows = query("SELECT * FROM users WHERE email = %s", (email,))
+    return rows[0] if rows else None
+
+
+def create_user(email: str, password_hash: str, role: str = "admin") -> dict[str, Any]:
+    rows = query(
+        """
+        INSERT INTO users (email, password_hash, role) VALUES (%s, %s, %s)
+        ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash,
+                                        role = EXCLUDED.role
+        RETURNING *
+        """,
+        (email, password_hash, role),
+    )
+    return rows[0]
+
+
+def count_users() -> int:
+    return query("SELECT count(*) AS n FROM users")[0]["n"]
+
+
+def update_company_admin(company_id: str, *, plan: str | None = None,
+                         status: str | None = None) -> dict[str, Any] | None:
+    sets: list[str] = []
+    params: list[Any] = []
+    if plan is not None:
+        sets.append("plan = %s")
+        params.append(plan)
+    if status is not None:
+        sets.append("status = %s")
+        params.append(status)
+    if not sets:
+        return get_company(company_id)
+    params.append(company_id)
+    rows = query(
+        f"UPDATE companies SET {', '.join(sets)} WHERE id = %s RETURNING *",
+        tuple(params),
+    )
+    return rows[0] if rows else None
+
+
+# -----------------------------------------------------------------------
+# Observabilité agrégée (dashboard admin)
+# -----------------------------------------------------------------------
+
+def agent_stats(hours: float = 24) -> list[dict[str, Any]]:
+    """Par agent : appels, moyenne, p95, max, erreurs sur la fenêtre."""
+    return query(
+        """
+        SELECT agent, count(*) AS calls,
+               ROUND(AVG(duration_s)::numeric, 3) AS avg_s,
+               ROUND(percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_s)::numeric, 3) AS p95_s,
+               ROUND(MAX(duration_s)::numeric, 3) AS max_s,
+               count(*) FILTER (WHERE detail LIKE 'error:%%') AS errors
+        FROM lg_logs
+        WHERE created_at > now() - %s * INTERVAL '1 hour'
+        GROUP BY agent ORDER BY calls DESC
+        """,
+        (hours,),
+    )
+
+
+def request_stats(hours: float = 24) -> dict[str, Any]:
+    return query(
+        """
+        SELECT count(*) AS total,
+               count(*) FILTER (WHERE outcome = 'ok') AS ok,
+               count(*) FILTER (WHERE outcome = 'error') AS errors,
+               count(*) FILTER (WHERE route = 'pipeline') AS pipeline_runs,
+               ROUND(AVG(latency_ms)::numeric, 0) AS avg_latency_ms,
+               ROUND(percentile_cont(0.95) WITHIN GROUP
+                     (ORDER BY latency_ms)::numeric, 0) AS p95_latency_ms
+        FROM lg_requests
+        WHERE started_at > now() - %s * INTERVAL '1 hour'
+        """,
+        (hours,),
+    )[0]
+
+
+def logs_for_request(request_id: str) -> list[dict[str, Any]]:
+    return query(
+        "SELECT agent, duration_s, detail, created_at FROM lg_logs "
+        "WHERE request_id = %s ORDER BY created_at",
+        (request_id,),
+    )
 
 
 def finish_pipeline_run(run_id: str, *, source_mode: str, ingested: int, matched: int,

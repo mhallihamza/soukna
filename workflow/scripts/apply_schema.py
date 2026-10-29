@@ -51,6 +51,8 @@ def main() -> int:
     print(f"[soukna] OK — {len(tables)} tables :")
     for row in tables:
         print(f"  - {row['table_name']}")
+    if db._pool is not None:
+        db._pool.close()
     return 0
 
 
