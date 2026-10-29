@@ -22,6 +22,9 @@ type Profile = {
   channel_email: boolean;
   max_guarantee: number | null;
   alert_min_score: number;
+  plan: string;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
 };
 
 type Opp = {
@@ -1161,6 +1164,24 @@ export default function DashboardPage() {
       {tabsEl}
       <main className="max-w-[1400px] w-full mx-auto p-4 lg:p-8 space-y-6 flex-1">
         {err && <div className="message message-err">{err}</div>}
+        {profile?.plan === "trial" && profile.trial_started_at && profile.trial_ends_at && (() => {
+          const start = new Date(profile.trial_started_at).getTime();
+          const end = new Date(profile.trial_ends_at).getTime();
+          const now = Date.now();
+          if (now > end) return null;
+          const day = Math.max(1, Math.floor((now - start) / 86400000) + 1);
+          const total = Math.max(1, Math.ceil((end - start) / 86400000));
+          return (
+            <div className="bg-greenbg border border-greenbrand/25 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+              <span className="text-xs font-bold text-greenbrand">
+                🎁 {lang === "fr" ? `Essai gratuit : jour ${day} sur ${total}` : `التجربة المجانية: اليوم ${day} من ${total}`}
+              </span>
+              <span className="text-[11px] text-muted">
+                {new Date(profile.trial_ends_at!).toLocaleDateString(lang === "fr" ? "fr-FR" : "ar-MA")}
+              </span>
+            </div>
+          );
+        })()}
         {kpisEl}
         {tab === "feed" && feedEl}
         {tab === "dossiers" && dossiersEl}

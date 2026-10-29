@@ -21,8 +21,13 @@ CREATE TABLE IF NOT EXISTS companies (
     channel_email BOOLEAN NOT NULL DEFAULT FALSE,
     max_guarantee INT,
     alert_min_score INT NOT NULL DEFAULT 70,
-    plan TEXT NOT NULL DEFAULT 'decouverte',   -- decouverte | pro | business
+    plan TEXT NOT NULL DEFAULT 'decouverte',   -- trial | decouverte | pro | business
     status TEXT NOT NULL DEFAULT 'active',     -- active | suspended
+    lang TEXT DEFAULT 'fr',
+    owner_email TEXT,                          -- compte client propriétaire (users.email)
+    waitlist_id UUID,                          -- ligne d'attente d'origine
+    trial_started_at TIMESTAMPTZ,              -- remplis à la confirmation onboarding
+    trial_ends_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -124,7 +129,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Waitlist de la landing (écrite par le navigateur via la clé publishable)
+-- Waitlist de la landing (écrite par le navigateur via la clé publishable).
+-- Cycle de vie : pending → invited → active (ou rejected).
 CREATE TABLE IF NOT EXISTS waitlist (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_name TEXT NOT NULL,
@@ -135,6 +141,31 @@ CREATE TABLE IF NOT EXISTS waitlist (
     lang TEXT DEFAULT 'fr',
     consent BOOLEAN NOT NULL DEFAULT TRUE,
     source TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',
+    invited_at TIMESTAMPTZ,
+    invited_by TEXT,
+    activated_at TIMESTAMPTZ,
+    admin_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Lien d'invitation à usage unique (le client choisit son mot de passe ;
+-- aucun mot de passe n'est jamais généré, montré ou envoyé).
+CREATE TABLE IF NOT EXISTS invite_tokens (
+    token TEXT PRIMARY KEY,
+    waitlist_id UUID NOT NULL REFERENCES waitlist(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Journal d'audit des actions admin (qui, quoi, quelle ligne, quand).
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    waitlist_id UUID,
+    detail TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -148,6 +179,17 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'act
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'fr';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS owner_email TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS waitlist_id UUID;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_by TEXT;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS admin_note TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_lower ON waitlist (lower(email));
 
 -- Index de lecture dashboard
 CREATE INDEX IF NOT EXISTS idx_matches_company ON matches(company_id);
@@ -173,6 +215,8 @@ ALTER TABLE lg_logs          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_messages_seen ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE waitlist         ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invite_tokens    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE audit_log        ENABLE ROW LEVEL SECURITY;
 
 -- Exception : la landing insère dans waitlist avec la clé publishable
 -- (rôle anon). Insertion seule, aucune lecture ni modification possible.

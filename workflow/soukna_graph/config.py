@@ -86,6 +86,9 @@ COMPANY_SIZES = ["petite", "pme", "grande"]
 VERDICT_GO_MIN = int(os.getenv("VERDICT_GO_MIN", "75"))
 VERDICT_NOGO_MAX = int(os.getenv("VERDICT_NOGO_MAX", "45"))
 
+# --- URL publique du dashboard (liens d'invitation) --------------------
+APP_URL = os.getenv("APP_URL", "http://localhost:3000")
+
 # --- Auth dashboard (rôles : admin / entreprise) ----------------------
 AUTH_SECRET = os.getenv("AUTH_SECRET", "dev-secret-change-me")  # ⚠️ à changer en prod
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import UTC, datetime
 from typing import Any
 
@@ -165,6 +166,28 @@ CREATE TABLE IF NOT EXISTS waitlist (
     lang TEXT DEFAULT 'fr',
     consent BOOLEAN NOT NULL DEFAULT TRUE,
     source TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',  -- pending | invited | active | rejected
+    invited_at TIMESTAMPTZ,
+    invited_by TEXT,
+    activated_at TIMESTAMPTZ,
+    admin_note TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS invite_tokens (
+    token TEXT PRIMARY KEY,
+    waitlist_id UUID NOT NULL REFERENCES waitlist(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    created_by TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    waitlist_id UUID,
+    detail TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 """
@@ -175,11 +198,22 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS max_guarantee INT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS alert_min_score INT NOT NULL DEFAULT 70;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'decouverte';
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS lang TEXT DEFAULT 'fr';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS owner_email TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS waitlist_id UUID;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS trial_ends_at TIMESTAMPTZ;
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending';
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_by TEXT;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
+ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS admin_note TEXT;
 CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
 CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_lower ON waitlist (lower(email));
 """
 
 # Le formulaire de la landing écrit dans waitlist via la clé publishable
@@ -663,6 +697,130 @@ def logs_for_request(request_id: str) -> list[dict[str, Any]]:
         "WHERE request_id = %s ORDER BY created_at",
         (request_id,),
     )
+
+
+# -----------------------------------------------------------------------
+# Waitlist → invitation → onboarding → essai (parcours client)
+# -----------------------------------------------------------------------
+
+def waitlist_list(*, status: str | None = None, q: str | None = None,
+                  sector: str | None = None, limit: int = 300) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM waitlist WHERE 1=1"
+    params: list[Any] = []
+    if status:
+        sql += " AND status = %s"
+        params.append(status)
+    if q:
+        sql += " AND (company_name ILIKE %s OR email ILIKE %s)"
+        params.extend([f"%{q}%", f"%{q}%"])
+    if sector:
+        sql += " AND sector = %s"
+        params.append(sector)
+    sql += " ORDER BY created_at DESC LIMIT %s"
+    params.append(limit)
+    return query(sql, tuple(params))
+
+
+def waitlist_counts() -> dict[str, int]:
+    rows = query(
+        "SELECT status, count(*) AS n FROM waitlist GROUP BY status"
+    )
+    counts = {"pending": 0, "invited": 0, "active": 0, "rejected": 0}
+    for r in rows:
+        counts[r["status"]] = r["n"]
+    return counts
+
+
+def waitlist_row(wid: str) -> dict[str, Any] | None:
+    rows = query("SELECT * FROM waitlist WHERE id = %s", (wid,))
+    return rows[0] if rows else None
+
+
+def waitlist_update(wid: str, **sets: Any) -> dict[str, Any] | None:
+    allowed = {"status", "invited_at", "invited_by", "activated_at", "admin_note"}
+    cols: list[str] = []
+    params: list[Any] = []
+    for k, v in sets.items():
+        if k in allowed and v is not None:
+            cols.append(f"{k} = %s")
+            params.append(v)
+    if not cols:
+        return waitlist_row(wid)
+    params.append(wid)
+    rows = query(
+        f"UPDATE waitlist SET {', '.join(cols)} WHERE id = %s RETURNING *",
+        tuple(params),
+    )
+    return rows[0] if rows else None
+
+
+def create_invite_token(waitlist_id: str, email: str, *, days: int,
+                        created_by: str) -> str:
+    token = secrets.token_urlsafe(32)
+    execute(
+        "INSERT INTO invite_tokens (token, waitlist_id, email, expires_at, created_by) "
+        "VALUES (%s, %s, %s, now() + (%s * INTERVAL '1 day'), %s)",
+        (token, waitlist_id, email, days, created_by),
+    )
+    return token
+
+
+def consume_invite_token(token: str) -> dict[str, Any] | None:
+    """Retourne le jeton si valide (non utilisé, non expiré), sinon None."""
+    rows = query(
+        "SELECT * FROM invite_tokens WHERE token = %s AND used_at IS NULL "
+        "AND expires_at > now()",
+        (token,),
+    )
+    return rows[0] if rows else None
+
+
+def mark_token_used(token: str) -> None:
+    execute("UPDATE invite_tokens SET used_at = now() WHERE token = %s", (token,))
+
+
+def audit(actor: str, action: str, waitlist_id: str | None = None,
+          detail: str = "") -> None:
+    execute(
+        "INSERT INTO audit_log (actor, action, waitlist_id, detail) VALUES (%s, %s, %s, %s)",
+        (actor, action, waitlist_id, detail[:500]),
+    )
+
+
+def email_taken(email: str, exclude_waitlist_id: str | None = None) -> bool:
+    """Un compte existe déjà pour cet email (user dashboard ou entreprise).
+    L'entreprise créée depuis la MÊME ligne d'attente ne compte pas comme
+    conflit (elle est créée à l'invitation, avant l'onboarding)."""
+    if get_user_by_email(email):
+        return True
+    if exclude_waitlist_id:
+        rows = query(
+            "SELECT 1 FROM companies WHERE lower(email) = %s "
+            "AND (waitlist_id IS NULL OR waitlist_id <> %s)",
+            (email, exclude_waitlist_id),
+        )
+    else:
+        rows = query("SELECT 1 FROM companies WHERE lower(email) = %s", (email,))
+    return bool(rows)
+
+
+def activate_trial_company(company_id: str, *, waitlist_id: str, owner_email: str,
+                           lang: str, trial_days: int = 14) -> None:
+    execute(
+        """
+        UPDATE companies SET waitlist_id = %s, owner_email = %s, lang = %s,
+               plan = 'trial', trial_started_at = now(),
+               trial_ends_at = now() + (%s * INTERVAL '1 day')
+        WHERE id = %s
+        """,
+        (waitlist_id, owner_email, lang, trial_days, company_id),
+    )
+
+
+def waitlist_sectors() -> list[str]:
+    return [r["sector"] for r in query(
+        "SELECT DISTINCT sector FROM waitlist WHERE sector IS NOT NULL ORDER BY sector"
+    )]
 
 
 def finish_pipeline_run(run_id: str, *, source_mode: str, ingested: int, matched: int,

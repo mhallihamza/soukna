@@ -398,6 +398,10 @@ export default function AdminPage() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          <a href="/admin/attente"
+             className="border border-line bg-white hover:bg-paper px-3 py-1.5 rounded-md text-xs font-semibold text-ink transition-all flex items-center gap-1.5">
+            📋 Liste d&apos;attente
+          </a>
           <button onClick={runPipeline} disabled={busy}
                   className="bg-greenbrand hover:bg-[#18553f] text-white px-3 py-1.5 rounded-md text-xs font-bold transition-all disabled:opacity-60">
             {busy ? t("running") : t("runPipeline")}

@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 from soukna_graph import config, db
 from soukna_graph.graph import build_graph
+from soukna_graph.tools import emailer
 
 app = FastAPI(title="Soukna Workflow API", version="1.0.0")
 app.add_middleware(
@@ -139,6 +140,21 @@ class ConfigPatch(BaseModel):
     portal_enabled: bool | None = None
     llm_enabled: bool | None = None
     kill_switch: bool | None = None
+
+
+class WaitlistNoteBody(BaseModel):
+    admin_note: str
+
+
+class OnboardingBody(BaseModel):
+    password: str
+    company_name: str
+    sector: str
+    cities: list[str] = []
+    keywords: list[str] = []
+    size: str = "pme"
+    whatsapp: str | None = None
+    lang: str = "fr"
 
 
 class ProfilePatch(BaseModel):
@@ -505,6 +521,241 @@ def observability_trace(
     if not rows:
         raise HTTPException(404, "Requête introuvable")
     return {"request": rows[0], "steps": db.logs_for_request(request_id)}
+
+
+# -----------------------------------------------------------------------
+# Parcours client : waitlist → invitation → onboarding → essai 14 jours
+# -----------------------------------------------------------------------
+
+INVITE_DAYS = 7  # durée de validité du lien d'invitation
+TRIAL_DAYS = 14
+
+
+def _invite_email_html(company_name: str, link: str, lang: str) -> tuple[str, str]:
+    """Email d'invitation court, dans la langue du client, un seul bouton."""
+    if lang == "ar":
+        subject = "فعّل حسابك على Soukna"
+        html = f"""
+        <div style="font-family:Arial,sans-serif;direction:rtl;text-align:right;max-width:520px;margin:auto;padding:24px;background:#fffdf9;border:1px solid #dcd6cb;border-radius:12px">
+          <h2 style="color:#0f1e2e;margin:0 0 8px">مرحباً {company_name}،</h2>
+          <p style="color:#66717b;font-size:14px;line-height:1.6">
+            تمت دعوتك للانضمام إلى Soukna، منصة ذكاء طلبات العروض العمومية بالمغرب.
+            اضغط على الزر لتأكيد ملف شركتك والبدء في تجربتك المجانية (14 يوماً).
+          </p>
+          <p style="text-align:center;margin:28px 0">
+            <a href="{link}" style="background:#1f6b52;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px">الدخول إلى Soukna</a>
+          </p>
+          <p style="color:#66717b;font-size:12px">هذا الرابط صالح لمدة {INVITE_DAYS} أيام ولمرة واحدة. إذا لم تطلب هذا الدعوة، تجاهل هذه الرسالة.</p>
+        </div>"""
+    else:
+        subject = "Votre accès Soukna — activez votre compte"
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#fffdf9;border:1px solid #dcd6cb;border-radius:12px">
+          <h2 style="color:#0f1e2e;margin:0 0 8px">Bonjour {company_name},</h2>
+          <p style="color:#66717b;font-size:14px;line-height:1.6">
+            Vous êtes invité à rejoindre Soukna, l'intelligence des marchés publics
+            au Maroc. Cliquez sur le bouton pour confirmer le profil de votre
+            entreprise et démarrer votre essai gratuit (14 jours).
+          </p>
+          <p style="text-align:center;margin:28px 0">
+            <a href="{link}" style="background:#1f6b52;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:14px">Accéder à Soukna</a>
+          </p>
+          <p style="color:#66717b;font-size:12px">Ce lien est valable {INVITE_DAYS} jours et à usage unique. Si vous n'êtes pas à l'origine de cette demande, ignorez ce message.</p>
+        </div>"""
+    return subject, html
+
+
+def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
+    """Logique partagée inviter / renvoyer : email + profil + statut + audit."""
+    row = db.waitlist_row(wid)
+    if not row:
+        raise HTTPException(404, "Ligne d'attente introuvable")
+    email = (row["email"] or "").strip().lower()
+    lang = row.get("lang") or "fr"
+
+    if row["status"] == "active":
+        raise HTTPException(409, "Ce client est déjà actif — aucune nouvelle invitation.")
+    if db.email_taken(email, exclude_waitlist_id=wid):
+        raise HTTPException(
+            409, "Un compte existe déjà pour cet email — invitation impossible (pas de doublon)."
+        )
+
+    # 1. Lien d'invitation à usage unique.
+    token = db.create_invite_token(wid, email, days=INVITE_DAYS, created_by=admin_email)
+    link = f"{config.APP_URL}/onboarding?token={token}"
+
+    # 2. Email d'invitation dans la langue du client.
+    subject, html = _invite_email_html(row["company_name"], link, lang)
+    sent, detail = emailer.send_email_html(email, subject, html)
+
+    # 3. Profil entreprise pré-rempli (échec email ⇒ statut inchangé).
+    if sent:
+        company = db.upsert_company(
+            name=row["company_name"], email=email, phone=row.get("whatsapp"),
+            sectors=[row["sector"]] if row.get("sector") else [],
+            keywords=[], regions=[],
+            size=row.get("company_size") or "pme",
+        )
+        db.execute(
+            "UPDATE companies SET lang = %s, owner_email = %s, waitlist_id = %s, "
+            "plan = 'trial' WHERE id = %s",
+            (lang, email, wid, str(company["id"])),
+        )
+        db.waitlist_update(
+            wid, status="invited", invited_at=db.utcnow(), invited_by=admin_email
+        )
+        db.audit(admin_email, "invite", wid, f"email envoyé à {email}")
+
+    return {
+        "row": db.waitlist_row(wid),
+        "email_sent": sent,
+        "email_detail": detail,
+        "link": link if not sent else None,  # lien visible seulement si l'email a échoué
+    }
+
+
+@app.get("/admin/waitlist")
+def admin_waitlist(
+    status: str = "",
+    q: str = "",
+    sector: str = "",
+    _user: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    rows = db.waitlist_list(
+        status=status or None, q=q or None, sector=sector or None
+    )
+    return {"counts": db.waitlist_counts(), "rows": rows,
+            "sectors": db.waitlist_sectors()}
+
+
+@app.post("/admin/waitlist/{wid}/invite")
+def admin_waitlist_invite(
+    wid: str, _user: dict[str, Any] = Depends(require_admin)
+) -> dict[str, Any]:
+    return _do_invite(wid, _user.get("sub", "admin"))
+
+
+@app.post("/admin/waitlist/{wid}/resend")
+def admin_waitlist_resend(
+    wid: str, _user: dict[str, Any] = Depends(require_admin)
+) -> dict[str, Any]:
+    """Renvoi : nouveau lien à usage unique (l'ancien reste valable jusqu'à
+    expiration, celui-ci remplace l'invitation en cours)."""
+    return _do_invite(wid, _user.get("sub", "admin"))
+
+
+@app.get("/admin/waitlist/{wid}/link")
+def admin_waitlist_link(
+    wid: str, _user: dict[str, Any] = Depends(require_admin)
+) -> dict[str, Any]:
+    """Lien de connexion à usage unique, jamais envoyé — pour WhatsApp."""
+    row = db.waitlist_row(wid)
+    if not row:
+        raise HTTPException(404, "Ligne introuvable")
+    if db.email_taken((row["email"] or "").strip().lower(), exclude_waitlist_id=wid):
+        raise HTTPException(409, "Un compte existe déjà pour cet email.")
+    token = db.create_invite_token(wid, row["email"], days=INVITE_DAYS,
+                                   created_by=_user.get("sub", "admin"))
+    db.audit(_user.get("sub", "admin"), "copy_link", wid, "lien généré (WhatsApp)")
+    return {"link": f"{config.APP_URL}/onboarding?token={token}"}
+
+
+@app.post("/admin/waitlist/{wid}/reject")
+def admin_waitlist_reject(
+    wid: str, _user: dict[str, Any] = Depends(require_admin)
+) -> dict[str, Any]:
+    row = db.waitlist_update(wid, status="rejected")
+    if not row:
+        raise HTTPException(404, "Ligne introuvable")
+    db.audit(_user.get("sub", "admin"), "reject", wid)
+    return row
+
+
+@app.post("/admin/waitlist/{wid}/restore")
+def admin_waitlist_restore(
+    wid: str, _user: dict[str, Any] = Depends(require_admin)
+) -> dict[str, Any]:
+    row = db.waitlist_update(wid, status="pending")
+    if not row:
+        raise HTTPException(404, "Ligne introuvable")
+    db.audit(_user.get("sub", "admin"), "restore", wid)
+    return row
+
+
+@app.patch("/admin/waitlist/{wid}/note")
+def admin_waitlist_note(
+    wid: str, body: WaitlistNoteBody,
+    _user: dict[str, Any] = Depends(require_admin),
+) -> dict[str, Any]:
+    row = db.waitlist_update(wid, admin_note=body.admin_note)
+    if not row:
+        raise HTTPException(404, "Ligne introuvable")
+    db.audit(_user.get("sub", "admin"), "note", wid, body.admin_note[:200])
+    return row
+
+
+@app.get("/onboarding/{token}")
+def onboarding_prefill(token: str) -> dict[str, Any]:
+    """Données pré-remplies pour le lien d'invitation (public, sans secret)."""
+    inv = db.consume_invite_token(token)
+    if not inv:
+        raise HTTPException(410, "Ce lien d'invitation est expiré ou déjà utilisé.")
+    row = db.waitlist_row(str(inv["waitlist_id"]))
+    if not row:
+        raise HTTPException(404, "Inscription introuvable")
+    return {
+        "email": row["email"],
+        "lang": row.get("lang") or "fr",
+        "prefill": {
+            "company_name": row["company_name"],
+            "sector": row.get("sector") or "",
+            "cities": [],
+            "keywords": [],
+            "size": row.get("company_size") or "pme",
+            "whatsapp": row.get("whatsapp") or "",
+        },
+    }
+
+
+@app.post("/onboarding/{token}")
+def onboarding_confirm(token: str, body: OnboardingBody) -> dict[str, Any]:
+    """Le client définit son mot de passe et confirme son profil.
+    L'essai de 14 jours démarre à cet instant précis."""
+    inv = db.consume_invite_token(token)
+    if not inv:
+        raise HTTPException(410, "Ce lien d'invitation est expiré ou déjà utilisé.")
+    email = (inv["email"] or "").strip().lower()
+    if len(body.password) < 8:
+        raise HTTPException(422, "Le mot de passe doit contenir au moins 8 caractères.")
+    if db.email_taken(email, exclude_waitlist_id=str(inv["waitlist_id"])):
+        raise HTTPException(409, "Un compte existe déjà pour cet email.")
+    if len(body.keywords) > 15:
+        raise HTTPException(422, "15 mots-clés maximum.")
+    lang = "ar" if body.lang == "ar" else "fr"
+
+    wid = str(inv["waitlist_id"])
+    # Compte client (mot de passe choisi par le client, jamais généré ni envoyé).
+    db.create_user(email, _hash_password(body.password), role="entreprise")
+    company = db.upsert_company(
+        name=body.company_name, email=email, phone=body.whatsapp or None,
+        sectors=[body.sector] if body.sector else [],
+        keywords=body.keywords, regions=body.cities,
+        size=body.size or "pme",
+    )
+    db.activate_trial_company(str(company["id"]), waitlist_id=wid,
+                              owner_email=email, lang=lang, trial_days=TRIAL_DAYS)
+    db.waitlist_update(wid, status="active", activated_at=db.utcnow())
+    db.mark_token_used(token)
+    db.audit(email, "activate", wid,
+             f"essai démarré ({TRIAL_DAYS} jours), entreprise {company['id']}")
+
+    exp = time.time() + config.TOKEN_TTL_HOURS * 3600
+    return {
+        "token": _sign({"role": "entreprise", "sub": email,
+                        "company_id": str(company["id"]), "exp": exp}),
+        "role": "entreprise",
+        "company_id": str(company["id"]),
+    }
 
 
 @app.get("/stats")
