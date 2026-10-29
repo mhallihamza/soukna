@@ -21,6 +21,8 @@ CREATE TABLE IF NOT EXISTS companies (
     channel_email BOOLEAN NOT NULL DEFAULT FALSE,
     max_guarantee INT,
     alert_min_score INT NOT NULL DEFAULT 70,
+    plan TEXT NOT NULL DEFAULT 'decouverte',   -- decouverte | pro | business
+    status TEXT NOT NULL DEFAULT 'active',     -- active | suspended
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -113,11 +115,36 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Users dashboard (credentials en base, rôles admin ; seed au 1er démarrage)
+CREATE TABLE IF NOT EXISTS users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    email TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'admin',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Waitlist de la landing (écrite par le navigateur via la clé publishable)
+CREATE TABLE IF NOT EXISTS waitlist (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_name TEXT NOT NULL,
+    email TEXT UNIQUE NOT NULL,
+    whatsapp TEXT,
+    sector TEXT,
+    company_size TEXT,
+    lang TEXT DEFAULT 'fr',
+    consent BOOLEAN NOT NULL DEFAULT TRUE,
+    source TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ---------------------------------------------------------------------
 -- Migrations idempotentes (bases créées avant l'ajout de ces colonnes)
 -- ---------------------------------------------------------------------
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS max_guarantee INT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS alert_min_score INT NOT NULL DEFAULT 70;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS plan TEXT NOT NULL DEFAULT 'decouverte';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'active';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS breakdown JSONB DEFAULT '{}';
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS saved BOOLEAN NOT NULL DEFAULT FALSE;
 ALTER TABLE matches ADD COLUMN IF NOT EXISTS note TEXT;
@@ -144,3 +171,16 @@ ALTER TABLE pipeline_runs    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_requests      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_logs          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_messages_seen ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
+ALTER TABLE waitlist         ENABLE ROW LEVEL SECURITY;
+
+-- Exception : la landing insère dans waitlist avec la clé publishable
+-- (rôle anon). Insertion seule, aucune lecture ni modification possible.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'waitlist'
+                   AND policyname = 'anon_insert_waitlist') THEN
+        CREATE POLICY anon_insert_waitlist ON waitlist
+            FOR INSERT TO anon WITH CHECK (true);
+    END IF;
+END $$;

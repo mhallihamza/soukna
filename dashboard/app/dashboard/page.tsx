@@ -7,6 +7,7 @@
 
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { api, clearAuth, getAuth } from "../lib";
+import BrandLoader from "../brand-loader";
 
 type Profile = {
   id: string;
@@ -165,9 +166,10 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     sizeFit: "Capacité & Taille",
     historyFit: "Historique & Références",
     notProvided: "Non renseigné",
-    loading: "Chargement…",
+    loading: "Préparation de vos opportunités…",
     logout: "Déconnexion",
     match: "MATCH",
+    footer: "© 2026 Soukna — Intelligence des marchés publics au Maroc",
   },
   ar: {
     searchPlaceholder: "كلمات مفتاحية، جهة الشراء، المدينة...",
@@ -260,9 +262,10 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     sizeFit: "القدرة والحجم",
     historyFit: "السجل والخبرة السابقة",
     notProvided: "غير محدد",
-    loading: "جارٍ التحميل…",
+    loading: "جارٍ تحضير الفرص الخاصة بك…",
     logout: "تسجيل الخروج",
     match: "التوافق",
+    footer: "© 2026 Soukna — ذكاء طلبات العروض العمومية بالمغرب",
   },
 };
 
@@ -1149,7 +1152,7 @@ export default function DashboardPage() {
 
   // ------------------------------------------------ page
   if (!loaded) {
-    return <main className="page container"><p className="subtitle">{t("loading")}</p></main>;
+    return <BrandLoader label={t("loading")} />;
   }
 
   return (
@@ -1170,7 +1173,7 @@ export default function DashboardPage() {
           {toast}
         </div>
       )}
-      <footer className="footer">Soukna — HAMZA MHALLI · Aba technology · © 2026</footer>
+      <footer className="footer">{t("footer")}</footer>
     </>
   );
 }

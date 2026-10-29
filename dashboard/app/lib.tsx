@@ -11,19 +11,29 @@ const KEY = "soukna_auth";
 export function getAuth(): Auth | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(KEY);
+    // Session "se souvenir de moi" (localStorage) ou onglet courant
+    // (sessionStorage) : localStorage prioritaire.
+    const raw = window.localStorage.getItem(KEY) ?? window.sessionStorage.getItem(KEY);
     return raw ? (JSON.parse(raw) as Auth) : null;
   } catch {
     return null;
   }
 }
 
-export function setAuth(auth: Auth) {
-  window.localStorage.setItem(KEY, JSON.stringify(auth));
+export function setAuth(auth: Auth, remember = true) {
+  const raw = JSON.stringify(auth);
+  if (remember) {
+    window.localStorage.setItem(KEY, raw);
+    window.sessionStorage.removeItem(KEY);
+  } else {
+    window.sessionStorage.setItem(KEY, raw);
+    window.localStorage.removeItem(KEY);
+  }
 }
 
 export function clearAuth() {
   window.localStorage.removeItem(KEY);
+  window.sessionStorage.removeItem(KEY);
 }
 
 export async function api<T = unknown>(
