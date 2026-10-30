@@ -17,6 +17,11 @@ def _meta_response(payload: dict, status: int = 200):
 
 
 def _send(monkeypatch, payload: dict):
+    # Environnement neutre (CI sans .env) : canal configuré, kill switch off —
+    # sinon send_whatsapp sort avant le HTTP avec 'whatsapp_not_configured'.
+    monkeypatch.setattr(whatsapp.config, "WHATSAPP_TOKEN", "test-token")
+    monkeypatch.setattr(whatsapp.config, "WHATSAPP_PHONE_NUMBER_ID", "123456")
+    monkeypatch.setattr(whatsapp.config, "KILL_SWITCH", False)
     monkeypatch.setattr(whatsapp.requests, "post",
                         lambda *a, **k: _meta_response(payload))
     return whatsapp.send_whatsapp("212659865507", "test")
