@@ -45,6 +45,17 @@ jobs:
             echo "Secrets manquants — cron sauté."
             exit 0
           fi
+          # Format : psycopg ne reconnaît que postgresql:// (URI). Une valeur
+          # avec guillemets/espaces (copiée telle quelle du .env, que dotenv
+          # nettoie mais que GitHub garde littérale) donne 30 s de
+          # PoolTimeout illisible : "missing \"=\" after \"***\"".
+          case "$DATABASE_URL" in
+            postgresql://*|postgres://*) : ;;
+            *)
+              echo "::error::SUPABASE_DATABASE_URL mal formée — doit commencer par postgresql://, sans guillemets ni espaces ni sauts de ligne (ex. postgresql://postgres.x:PASS@aws-0-....pooler.supabase.com:6543/postgres)."
+              exit 1
+              ;;
+          esac
 
       - uses: actions/setup-python@v5
         with:

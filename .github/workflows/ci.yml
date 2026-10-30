@@ -61,6 +61,15 @@ jobs:
             echo "::error::Secrets manquants — ajoute SUPABASE_DATABASE_URL et MISTRAL_API_KEY dans Settings > Secrets and variables > Actions, puis relance le workflow."
             exit 1
           fi
+          # Format URI : sans ce garde, une valeur avec guillemets/espaces
+          # donne 30 s de PoolTimeout illisible (missing \"=\" after \"***\").
+          case "$DATABASE_URL" in
+            postgresql://*|postgres://*) : ;;
+            *)
+              echo "::error::SUPABASE_DATABASE_URL mal formée — doit commencer par postgresql://, sans guillemets ni espaces (dotenv les enlève en local, GitHub les garde)."
+              exit 1
+              ;;
+          esac
 
       - uses: actions/setup-python@v5
         with:
