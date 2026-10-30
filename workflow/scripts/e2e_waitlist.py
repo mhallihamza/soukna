@@ -2,9 +2,9 @@
 # e2e_waitlist.py — parcours complet : landing → invite → onboarding →
 # essai, + vérifications de sécurité. Purge ses données à la fin.
 # =====================================================================
+import datetime
 import json
 import sys
-import datetime
 import urllib.error
 import urllib.request
 
@@ -151,7 +151,7 @@ ok(st == 200 and res["status"] == "pending", "remise en attente -> pending")
 logs = dbm.query(
     "SELECT actor, action FROM audit_log WHERE waitlist_id = %s ORDER BY created_at",
     (wid,))
-actions = [l["action"] for l in logs]
+actions = [row["action"] for row in logs]
 ok("invite" in actions and "copy_link" in actions and "activate" in actions,
    f"journal d'audit : {actions}")
 
