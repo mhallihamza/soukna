@@ -32,6 +32,11 @@ class AgentState(TypedDict, total=False):
     digest_text: str
     delivered: list[str]
 
+    # FAQ agent (RAG sur Astra souknabase)
+    faq_hits: int               # passages de la KB utilisés pour la réponse
+    faq_sources: list[str]      # documents consultés (ex. soukna-kb-02-tarifs-fr)
+    llm_mode: str               # mistral | heuristic (dernier agent LLM)
+
     # Sortie
     reply_text: str
     whatsapp_sent: bool | None

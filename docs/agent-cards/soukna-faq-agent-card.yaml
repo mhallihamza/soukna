@@ -1,0 +1,49 @@
+# =====================================================================
+# Agent Card — FAQ (questions standards, RAG sur Astra)
+# =====================================================================
+carte:
+  agent: SouknaFaqAgent
+  slug: soukna-faq-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + DataStax Astra (Data API v2, embedding NVIDIA intégré) + Mistral"
+  runtime: "Nœud faq du StateGraph — chat uniquement (jamais appelé par le pipeline)"
+
+objectif: >
+  Répondre en langage naturel aux questions STANDARD des entreprises sur
+  Soukna elle-même (présentation, tarifs, compte, matching, guide
+  d'utilisation, données, contact) en FR/EN/AR, à partir de la base de
+  connaissances vectorisée « souknabase » (Astra) : RAG strict, aucune
+  information hors documents, sources citées.
+
+outils:
+  - "tools/astra_kb.py : Data API v2 Astra — recherche $vectorize (embedding NVIDIA INTÉGRÉ : aucun service d'embedding externe)"
+  - "kb/soukna-kb-*.pdf : 7 sujets × fr/ar ; ingestion par scripts/load_kb.py (insertMany + $vectorize)"
+  - "llm.py : rédaction de la réponse (Mistral) ; repli heuristique = extrait du meilleur passage + sources"
+  - "Filtre lang (fr/ar) à la recherche, puis retente sans filtre si vide"
+
+entrees:
+  - champ: message
+    description: "La question de l'utilisateur (routée faq par l'orchestrator)"
+  - champ: language
+    description: "fr | en | ar (l'orchestrator la fixe ; détecté en arabe sinon)"
+
+sorties:
+  - champ: reply_text
+    description: "Réponse livrée (LLM si disponible, sinon extrait documentaire + sources)"
+  - champ: faq_hits / faq_sources
+    description: "Nombre de passages utilisés et documents consultés (traçage lg_logs)"
+
+limites:
+  - "RAG STRICT : ne répond QUE depuis les passages récupérés ; silencieux-inventif interdit — renvoie vers dashboard/support si insuffisant."
+  - "Ne traite JAMAIS les appels d'offres concrets (c'est le rôle de matching/verdict) ni les mises à jour de profil."
+  - "Lire seule côté Astra pour le chat : ingestion réservée à scripts/load_kb.py."
+  - "Astra injoignable ou KB vide : réponse de repli propre (pas d'exception dans le chat)."
+  - "Réponse bornée à FAQ_MAX_ANSWER_CHARS."
+
+securite:
+  - "Embedding NVIDIA intégré Astra : la clé Mistral n'est utilisée que pour RÉDIGER, jamais pour vectoriser."
+  - "Token Astra dans .env uniquement (AUCUNE valeur réelle dans git) ; requêtes authentifiées Bearer."
+  - "Traçage lg_logs et lg_requests standard ; faq_hits/faq_sources observables côté admin."
+  - "Replis déterministes testés hors-ligne ; l'observabilité ne casse jamais le chat."

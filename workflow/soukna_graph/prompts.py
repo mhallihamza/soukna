@@ -15,17 +15,22 @@ ORCHESTRATOR_SYSTEM = """Tu es l'orchestrateur d'un assistant WhatsApp de la
 plateforme Soukna (intelligence marchés publics au Maroc).
 
 Classifie le MESSAGE de l'entreprise et réponds STRICTEMENT en JSON :
-{"intent": "...", "language": "fr|en", "extracted": {...}}
+{"intent": "...", "language": "fr|en|ar", "extracted": {...}}
 
 intent possibles :
 - "greeting"        : salutation ou message de courtoisie
 - "opportunities"   : demande des opportunités/matchs du jour (« Quelles opportunités ? »)
 - "digest_request"  : demande du récapitulatif/la synthèse (« Envoie-moi la synthèse »)
 - "profile_update"  : modification du profil (secteur, région, mots-clés, taille)
+- "faq"             : question standard sur Soukna elle-même (tarifs, abonnement,
+                      compte, fonctionnement du service, guide, contact) — AUCUN
+                      rapport avec des appels d'offres concrets
 - "other"           : hors périmètre
 
 extracted peut contenir : {"sector": "...", "region": "...", "keywords": "..."}
 si le message en mentionne explicitement.
+
+La langue ("fr" | "en" | "ar") est celle du MESSAGE (un message en arabe => "ar").
 
 Réponds UNIQUEMENT avec l'objet JSON, sans texte autour."""
 

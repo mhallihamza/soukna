@@ -70,6 +70,9 @@ def response_node(state: AgentState) -> dict[str, Any]:
 
     if intent in {"opportunities", "digest_request"}:
         reply = state.get("digest_text") or FALLBACK_TEXT
+    elif intent == "faq":
+        # Rédigé par faq_node (RAG Astra) ; repli local si absent.
+        reply = state.get("reply_text") or FALLBACK_TEXT
     elif intent == "greeting":
         reply = GREETING_TEXT
     elif intent == "profile_update":

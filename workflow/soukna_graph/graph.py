@@ -1,9 +1,10 @@
 # =====================================================================
-# Graphe Soukna — 7 nœuds, deux modes d'exécution :
+# Graphe Soukna — 8 nœuds, deux modes d'exécution :
 #   • pipeline (admin /run ou cron) :
 #       intake → sources → matching → verdict → digest → END
 #   • chat (webhook WhatsApp) :
 #       intake → orchestrator → (matching → verdict → digest)? → response
+#                          ou faq → response (questions standards, RAG Astra)
 # =====================================================================
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from typing import Any
 from langgraph.graph import END, StateGraph
 
 from .nodes.digest import digest_node
+from .nodes.faq import faq_node
 from .nodes.intake import intake_node
 from .nodes.matching import matching_node
 from .nodes.orchestrator import orchestrator_node
@@ -35,6 +37,8 @@ def _route_from_intake(state: AgentState) -> str:
 def _route_from_orchestrator(state: AgentState) -> str:
     if state.get("intent") in {"opportunities", "digest_request"}:
         return "matching"
+    if state.get("intent") == "faq":
+        return "faq"
     return "response"
 
 
@@ -50,6 +54,7 @@ def build_graph():
     graph.add_node("matching", matching_node)
     graph.add_node("verdict", verdict_node)
     graph.add_node("digest", digest_node)
+    graph.add_node("faq", faq_node)
     graph.add_node("response", response_node)
 
     graph.set_entry_point("intake")
@@ -67,8 +72,10 @@ def build_graph():
     })
     graph.add_conditional_edges("orchestrator", _route_from_orchestrator, {
         "matching": "matching",
+        "faq": "faq",
         "response": "response",
     })
+    graph.add_edge("faq", "response")
     return graph.compile()
 
 

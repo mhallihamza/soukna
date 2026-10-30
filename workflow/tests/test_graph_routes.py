@@ -22,6 +22,10 @@ def test_orchestrator_routes_analysis_intents_to_matching():
     assert _route_from_orchestrator({"intent": "digest_request"}) == "matching"
 
 
+def test_orchestrator_routes_faq_intents_to_faq_node():
+    assert _route_from_orchestrator({"intent": "faq"}) == "faq"
+
+
 def test_orchestrator_routes_other_intents_to_response():
     assert _route_from_orchestrator({"intent": "greeting"}) == "response"
     assert _route_from_orchestrator({"intent": "profile_update"}) == "response"

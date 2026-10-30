@@ -115,3 +115,19 @@ MON_ALERT_COOLDOWN_H = float(os.getenv("MON_ALERT_COOLDOWN_H", "6"))   # anti-sp
 MON_ALERT_EMAIL = os.getenv("MON_ALERT_EMAIL", "")   # vide = ADMIN_USERNAME
 MON_ALERT_WHATSAPP = os.getenv("MON_ALERT_WHATSAPP", "")  # vide = pas d'alerte WA
 
+# --- Base de connaissances FAQ (DataStax Astra, Data API v2) --------------
+# Embedding INTÉGRÉ à Astra (service NVIDIA, champ $vectorize) : aucun
+# appel externe d'embedding, ni clé Mistral/OpenAI pour vectoriser.
+ASTRA_DB_API_ENDPOINT = os.getenv("ASTRA_DB_API_ENDPOINT", "")  # ex. https://<id>-us-east-2.apps.astra.datastax.com
+ASTRA_DB_TOKEN = os.getenv("ASTRA_DB_TOKEN", "")               # AstraCS:... (application token)
+ASTRA_DB_KEYSPACE = os.getenv("ASTRA_DB_KEYSPACE", "default_keyspace")
+ASTRA_DB_COLLECTION = os.getenv("ASTRA_DB_COLLECTION", "souknabase")
+FAQ_TOP_K = int(os.getenv("FAQ_TOP_K", "4"))                   # passages récupérés par question
+FAQ_MAX_ANSWER_CHARS = int(os.getenv("FAQ_MAX_ANSWER_CHARS", "800"))
+KB_DIR = Path(__file__).resolve().parent.parent / "kb"         # PDFs de la base de connaissances
+KB_CHUNK_CHARS = int(os.getenv("KB_CHUNK_CHARS", "1200"))      # taille cible d'un passage
+
+
+def astra_ready() -> bool:
+    return bool(ASTRA_DB_API_ENDPOINT and ASTRA_DB_TOKEN)
+

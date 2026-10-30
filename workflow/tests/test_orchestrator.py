@@ -39,3 +39,28 @@ def test_profile_update():
 def test_other():
     assert heuristic_intent("Quel temps fait-il à Casablanca ?")["intent"] == "other"
     assert heuristic_intent("12345")["intent"] == "other"
+
+
+def test_faq_questions_fr_ar_en():
+    # posé sur Soukna elle-même : tarifs, fonctionnement, compte…
+    assert heuristic_intent("C'est combien l'abonnement ?")["intent"] == "faq"
+    assert heuristic_intent("Comment fonctionne Soukna ?")["intent"] == "faq"
+    assert heuristic_intent("Où trouver le contact du support ?")["intent"] == "faq"
+    assert heuristic_intent("Quel est le prix tarif ?")["intent"] == "faq"
+    assert heuristic_intent("كيف أغير тариф؟")["intent"] == "faq"  # comment changer tarif
+    assert heuristic_intent("How much is the subscription price?")["intent"] == "faq"
+
+
+def test_faq_does_not_hijack_useful_intents():
+    # « combien » + offres = demande d'opportunités, pas une question faq
+    assert heuristic_intent("Combien d'offres aujourd'hui ?")["intent"] == "opportunities"
+    # salutation longue avec « comment » = toujours une salutation
+    assert heuristic_intent("Salam, comment allez-vous ?")["intent"] == "greeting"
+    # « help me change my profile » = update de profil
+    assert heuristic_intent("help me change my sector")["intent"] == "profile_update"
+
+
+def test_language_detection_arabic():
+    assert heuristic_intent("شنو هي الخدمة؟")["language"] == "ar"
+    assert heuristic_intent("Comment ça marche ?")["language"] == "fr"
+    assert heuristic_intent("How much is it?")["language"] == "en"

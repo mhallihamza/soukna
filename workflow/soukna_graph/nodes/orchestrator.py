@@ -12,7 +12,7 @@ from ..prompts import ORCHESTRATOR_SYSTEM, today_hint
 from ..state import AgentState
 from ..tracing import traced
 
-ALLOWED_INTENTS = {"greeting", "opportunities", "digest_request", "profile_update", "other"}
+ALLOWED_INTENTS = {"greeting", "opportunities", "digest_request", "profile_update", "faq", "other"}
 
 
 def heuristic_intent(message: str) -> dict[str, Any]:
@@ -22,19 +22,35 @@ def heuristic_intent(message: str) -> dict[str, Any]:
     def has(*words: str) -> bool:
         return any(w in m for w in words)
 
+    # Ordre du plus spécifique au plus large ; les salutations restent des
+    # salutations même longues (« Salam, comment allez-vous ? » = greeting).
     if has("synth", "digest", "récap", "recap", "résum", "resum", "ملخص"):
         intent = "digest_request"
-    elif has("profil", "profile", "secteur", "région", "region", "mot-clé",
-             "mot cle", "ملف", "قطاع"):
+    elif has("profil", "profile", "sector", "secteur", "région", "region",
+             "mot-clé", "mot cle", "ملف", "قطاع"):
         intent = "profile_update"
     elif has("opportunit", "match", "appel", "offre", "marché", "marche",
              "فرص", "صفقة", "مناقصة"):
         intent = "opportunities"
     elif has("bonjour", "salut", "hello", "salam", "سلام", "صباح", "مسا"):
         intent = "greeting"
+    # FAQ : questions standards sur Soukna elle-même (tarifs, compte, guide…)
+    elif has("comment", "combien", "pourquoi", "est-ce que", "qui sommes",
+             "fonctionne", "abonnement", "tarif", "prix", "coût", "cout", "compte",
+             "essai", "gratuit", "contact", "support", "aide",
+             "how", "what", "price", "cost", "account", "free trial",
+             "دعم", "مساعدة", "كيف", "شنو", "واش", "ثمن", "حساب",
+             "اشتراك", "أسعار"):
+        intent = "faq"
     else:
         intent = "other"
-    language = "en" if has("hello", "opportunities", "summary") and not has("bonjour") else "fr"
+    # Langue : des caractères arabes → ar ; mots anglais explicites → en ; sinon fr.
+    if any("\u0600" <= ch <= "\u06FF" for ch in message or ""):
+        language = "ar"
+    elif has("hello", "what", "how", "price", "help", "opportunities", "summary"):
+        language = "en"
+    else:
+        language = "fr"
     return {"intent": intent, "language": language, "extracted": {}}
 
 
@@ -50,7 +66,7 @@ def orchestrator_node(state: AgentState) -> dict[str, Any]:
     intent = parsed.get("intent")
     if intent not in ALLOWED_INTENTS:
         intent = fallback["intent"]  # garde-fou : jamais d'intention inconnue
-    language = parsed.get("language") if parsed.get("language") in {"fr", "en"} \
+    language = parsed.get("language") if parsed.get("language") in {"fr", "en", "ar"} \
         else fallback["language"]
     extracted = parsed.get("extracted") if isinstance(parsed.get("extracted"), dict) else {}
 

@@ -118,6 +118,7 @@ const AGENT_LABELS: Record<string, { fr: string; ar: string }> = {
   verdict: { fr: "RiskAnalyzerAgent (Verdict & Risques)", ar: "وكيل المخاطر (التوصية والمخاطر)" },
   digest: { fr: "DigestAgent (Synthèse & Envois)", ar: "وكيل الملخص (الإرسال)" },
   intake: { fr: "IntakeAgent (Réception messages)", ar: "وكيل الاستقبال (الرسائل)" },
+  faq: { fr: "FaqAgent (Questions standards — RAG)", ar: "وكيل الأسئلة الشائعة" },
   orchestrator: { fr: "Orchestrator (Routage)", ar: "المنسق (التوجيه)" },
   response: { fr: "ResponseAgent (Réponses)", ar: "وكيل الردود" },
 };

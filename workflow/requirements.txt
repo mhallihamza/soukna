@@ -7,6 +7,7 @@ tokenizers>=0.19
 psycopg[binary,pool]>=3.2
 python-dotenv>=1.0
 requests>=2.31
+pypdf>=4.0    # lecture des PDF de la base de connaissances (ingestion Astra)
 fastapi>=0.115
 uvicorn[standard]>=0.30
 
