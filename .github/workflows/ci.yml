@@ -50,6 +50,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Échec immédiat et explicite si les secrets ne sont pas configurés
+      # (sinon : 30 s de retries du pool + traceback psycopg illisible).
+      - name: Vérifier les secrets requis
+        env:
+          HAS_DB: ${{ secrets.SUPABASE_DATABASE_URL != '' }}
+          HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
+        run: |
+          if [ "$HAS_DB" != "true" ] || [ "$HAS_MISTRAL" != "true" ]; then
+            echo "::error::Secrets manquants — ajoute SUPABASE_DATABASE_URL et MISTRAL_API_KEY dans Settings > Secrets and variables > Actions, puis relance le workflow."
+            exit 1
+          fi
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
