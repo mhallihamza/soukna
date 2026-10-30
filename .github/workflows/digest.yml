@@ -1,0 +1,59 @@
+# =====================================================================
+# Digest quotidien — pipeline complet planifié (fichier séparé de ci.yml
+# pour pouvoir le tester manuellement sans déclencher live-eval).
+#
+#   • cron : 07:00 UTC = 08:00 heure du Maroc (UTC+1)
+#   • workflow_dispatch avec input confirm=true : test manuel
+#
+# ⚠️ KILL_SWITCH=false : ce job envoie les digests RÉELS (WhatsApp/email)
+# aux entreprises actives. C'est le but — d'où la confirmation manuelle.
+# Secrets réutilisés : SUPABASE_DATABASE_URL, MISTRAL_API_KEY.
+# Si absents : le job s'ignore proprement (warning, pas d'échec rouge).
+# =====================================================================
+name: Digest quotidien
+
+on:
+  schedule:
+    - cron: "0 7 * * *"
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Écrire true pour envoyer les digests réels maintenant"
+        default: "false"
+
+jobs:
+  daily-pipeline:
+    if: github.event_name == 'schedule' || github.event.inputs.confirm == 'true'
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.SUPABASE_DATABASE_URL }}
+      MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+      MISTRAL_MODEL: codestral-latest
+      KILL_SWITCH: "false"   # envois réels : c'est une exécution de production
+    steps:
+      - uses: actions/checkout@v4
+
+      # Sans secrets, on saute en silence (warning visible, job vert) :
+      # un cron rouge chaque matin serait du bruit inutile.
+      - name: Vérifier les secrets requis
+        env:
+          HAS_DB: ${{ secrets.SUPABASE_DATABASE_URL != '' }}
+          HAS_MISTRAL: ${{ secrets.MISTRAL_API_KEY != '' }}
+        run: |
+          if [ "$HAS_DB" != "true" ] || [ "$HAS_MISTRAL" != "true" ]; then
+            echo "::warning::Cron ignoré — ajoute SUPABASE_DATABASE_URL et MISTRAL_API_KEY dans Settings > Secrets and variables > Actions, puis fait un Run workflow de test."
+            echo "Secrets manquants — cron sauté."
+            exit 0
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r workflow/requirements.txt
+
+      - name: Pipeline quotidien (collecte → matching → verdict → digests)
+        working-directory: workflow
+        run: python scripts/run_scheduled.py
