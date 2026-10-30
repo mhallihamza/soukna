@@ -1,8 +1,3 @@
-# =====================================================================
-# Dataset d'évaluation — 10 cas exécutés sur le VRAI graphe, jugés par
-# LLM (MISTRAL_MODEL) ou heuristique sans clé. Chaque cas déclare le
-# message et les critères attendus (intent + mots-clés de la réponse).
-# =====================================================================
 [
   {
     "id": "greeting_fr",
