@@ -21,7 +21,7 @@ from soukna_graph import config, db, monitoring
 from soukna_graph.graph import build_graph
 from soukna_graph.tools import emailer, whatsapp
 
-app = FastAPI(title="Soukna Workflow API", version="1.0.0")
+app = FastAPI(title="Soukna Workflow API", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,

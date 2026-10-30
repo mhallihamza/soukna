@@ -120,6 +120,13 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Agent de monitoring : état persistant (dernière alerte, anti-spam)
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Users dashboard (credentials en base, rôles admin ; seed au 1er démarrage)
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -215,6 +222,7 @@ ALTER TABLE digests          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pipeline_runs    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_requests      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_logs          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE monitor_state    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_messages_seen ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE waitlist         ENABLE ROW LEVEL SECURITY;

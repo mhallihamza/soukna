@@ -7,6 +7,7 @@
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import BrandLoader from "../brand-loader";
+import { API_URL } from "../lib";
 
 type Prefill = {
   email: string;
@@ -102,7 +103,7 @@ function OnboardingInner() {
     if (!token) { setFatal("Lien d'invitation invalide."); return; }
     (async () => {
       try {
-        const r = await fetch(`http://localhost:8000/onboarding/${encodeURIComponent(token)}`);
+        const r = await fetch(`${API_URL}/onboarding/${encodeURIComponent(token)}`);
         if (!r.ok) {
           const body = await r.json().catch(() => null);
           setFatal(body?.detail || "Ce lien d'invitation est expiré ou déjà utilisé.");
@@ -144,7 +145,7 @@ function OnboardingInner() {
     if (password !== confirm) { setError(t("pwdMismatch")); return; }
     setBusy(true);
     try {
-      const r = await fetch(`http://localhost:8000/onboarding/${encodeURIComponent(token)}`, {
+      const r = await fetch(`${API_URL}/onboarding/${encodeURIComponent(token)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
