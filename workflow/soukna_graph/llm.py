@@ -55,19 +55,46 @@ def extract_json(text: str) -> dict[str, Any] | None:
     return None
 
 
-def call_llm_json(llm: Any, prompt: str, fallback: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    """Appelle le LLM et exige un objet JSON. Repli : `fallback` + mode 'heuristic'."""
+def extract_usage(resp: Any) -> dict[str, int] | None:
+    """Tokens consommés par un appel LLM (format langchain ou Mistral)."""
+    try:
+        um = getattr(resp, "usage_metadata", None)
+        if isinstance(um, dict) and um.get("total_tokens"):
+            return {"in": int(um.get("input_tokens") or 0),
+                    "out": int(um.get("output_tokens") or 0)}
+        tu = (getattr(resp, "response_metadata", None) or {}).get("token_usage") or {}
+        if tu.get("total_tokens"):
+            return {"in": int(tu.get("prompt_tokens") or 0),
+                    "out": int(tu.get("completion_tokens") or 0)}
+    except Exception:
+        pass
+    return None
+
+
+def merge_usage(state: dict[str, Any], usage: dict[str, int] | None) -> dict[str, int] | None:
+    """Accumule la consommation LLM dans l'état du graphe (par requête)."""
+    if not usage:
+        return None
+    prev = dict(state.get("llm_usage") or {})
+    return {"in": prev.get("in", 0) + usage["in"],
+            "out": prev.get("out", 0) + usage["out"]}
+
+
+def call_llm_json(llm: Any, prompt: str,
+                  fallback: dict[str, Any]) -> tuple[dict[str, Any], str, dict[str, int] | None]:
+    """Appelle le LLM et exige un objet JSON.
+    Repli : `fallback` + mode 'heuristic'. Retourne aussi la consommation."""
     if llm is None:
-        return fallback, "heuristic"
+        return fallback, "heuristic", None
     try:
         resp = llm.invoke(prompt)
         content = getattr(resp, "content", "") or ""
         parsed = extract_json(content)
         if parsed is not None:
-            return parsed, "mistral"
+            return parsed, "mistral", extract_usage(resp)
     except Exception:  # 429/403/réseau : repli silencieux mais tracé
         pass
-    return fallback, "heuristic"
+    return fallback, "heuristic", None
 
 
 def mistral_judge(expected: dict[str, Any], actual: dict[str, Any]) -> dict[str, Any] | None:

@@ -8,7 +8,7 @@ import json
 from typing import Any
 
 from .. import config, db
-from ..llm import call_llm_json, make_llm
+from ..llm import call_llm_json, make_llm, merge_usage
 from ..prompts import VERDICT_SYSTEM
 from ..state import AgentState
 from ..tracing import traced
@@ -30,6 +30,7 @@ def verdict_node(state: AgentState) -> dict[str, Any]:
 
     llm, _mode = make_llm()
     vmap: dict[str, dict[str, Any]] = {}
+    usage = None
     if llm is not None:
         listing = json.dumps([
             {
@@ -47,7 +48,7 @@ def verdict_node(state: AgentState) -> dict[str, Any]:
             + '[{"key": "...", "verdict": "go|a_etudier|no_go", "risks": ["..."]}]}'
             + f"\n\nITEMS : {listing}"
         )
-        parsed, _mode = call_llm_json(llm, prompt, {})
+        parsed, _mode, usage = call_llm_json(llm, prompt, {})
         for v in (parsed or {}).get("verdicts") or []:
             if isinstance(v, dict) and v.get("key"):
                 vmap[str(v["key"])] = v
@@ -65,4 +66,4 @@ def verdict_node(state: AgentState) -> dict[str, Any]:
         it["risks"] = risks
         db.set_verdict(it["opportunity_id"], it["company_id"], verdict, risks)
 
-    return {"matches": items}
+    return {"matches": items, "llm_usage": merge_usage(state, usage)}

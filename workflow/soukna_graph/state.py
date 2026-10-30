@@ -37,3 +37,4 @@ class AgentState(TypedDict, total=False):
     whatsapp_sent: bool | None
     error: str
     agent_timings: list[dict[str, Any]]
+    llm_usage: dict[str, int]    # {"in": n, "out": n} cumulés sur la requête

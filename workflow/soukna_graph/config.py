@@ -13,6 +13,9 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://soukna:soukna@localhost:5432/soukna")
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "codestral-latest")
+# Tarification LLM (USD / million de tokens) pour le coût d'observabilité.
+LLM_PRICE_INPUT = float(os.getenv("LLM_PRICE_INPUT", "0.3"))
+LLM_PRICE_OUTPUT = float(os.getenv("LLM_PRICE_OUTPUT", "0.9"))
 
 # Interrupteur runtime (admin dashboard) : couper le LLM bascule tout
 # le scoring sur le mode heuristique sans redémarrer le service.

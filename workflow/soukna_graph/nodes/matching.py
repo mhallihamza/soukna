@@ -10,7 +10,7 @@ from datetime import date as _date
 from typing import Any
 
 from .. import db
-from ..llm import call_llm_json, make_llm
+from ..llm import call_llm_json, make_llm, merge_usage
 from ..prompts import MATCHING_SYSTEM
 from ..state import AgentState
 from ..tracing import traced
@@ -115,11 +115,12 @@ def _heuristic_match(opp: dict[str, Any],
 
 
 def _score_batch(llm: Any, company: dict[str, Any],
-                 opps: list[dict[str, Any]]) -> list[tuple[int, list[str], list[str], dict[str, int]]]:
+                 opps: list[dict[str, Any]]) -> tuple[list[tuple[int, list[str], list[str], dict[str, int]]], dict[str, int] | None]:
     """1 appel LLM pour toutes les opportunités d'une entreprise ; repli total."""
     results = [_heuristic_match(o, company) for o in opps]
+    usage = None
     if llm is None:
-        return results
+        return results, None
 
     profile = json.dumps({
         "secteurs": company.get("sectors"),
@@ -144,7 +145,7 @@ def _score_batch(llm: Any, company: dict[str, Any],
         + '"match_score": 0-100, "reasons": ["..."], "risks": ["..."]}]}'
         + f"\n\nPROFIL : {profile}\n\nOPPORTUNITÉS : {opps_json}"
     )
-    parsed, _mode = call_llm_json(llm, prompt, {})
+    parsed, _mode, usage = call_llm_json(llm, prompt, {})
     by_ref: dict[str, dict[str, Any]] = {}
     for m in (parsed or {}).get("matches") or []:
         if isinstance(m, dict) and m.get("source_ref"):
@@ -161,7 +162,7 @@ def _score_batch(llm: Any, company: dict[str, Any],
         reasons = [str(r) for r in (m.get("reasons") or [])][:3] or results[i][1]
         risks = [str(r) for r in (m.get("risks") or [])][:4]
         results[i] = (score, reasons, risks, results[i][3])
-    return results
+    return results, usage
 
 
 @traced("matching", lambda r: f"matches={len(r.get('matches') or [])}")
@@ -175,13 +176,15 @@ def matching_node(state: AgentState) -> dict[str, Any]:
 
     llm, _mode = make_llm()
     items: list[dict[str, Any]] = []
+    usage_state = None
     for company in companies:
         if not company:
             continue
         opps = db.opportunities_without_match(str(company["id"]), limit=10)
         if not opps:
             continue
-        for opp, (score, reasons, risks, breakdown) in zip(opps, _score_batch(llm, company, opps)):
+        batch, usage = _score_batch(llm, company, opps)
+        for opp, (score, reasons, risks, breakdown) in zip(opps, batch):
             db.upsert_match(
                 opportunity_id=str(opp["id"]),
                 company_id=str(company["id"]),
@@ -210,4 +213,5 @@ def matching_node(state: AgentState) -> dict[str, Any]:
                 "risks": risks,
                 "verdict": "",
             })
-    return {"matches": items}
+        usage_state = merge_usage(state, usage) or usage_state
+    return {"matches": items, "llm_usage": usage_state}

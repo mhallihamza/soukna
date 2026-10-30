@@ -259,6 +259,7 @@ async def process_incoming(msg: dict[str, str]) -> None:
         if request_id:
             db.finalize_request(
                 request_id, route=result.get("route", "?"), outcome="ok",
+                llm_usage=result.get("llm_usage"),
             )
     except Exception as exc:
         try:
@@ -302,7 +303,8 @@ async def run_pipeline_endpoint(_user: dict[str, Any] = Depends(require_admin)) 
         )
         request_id = result.get("request_id")
         if request_id:
-            db.finalize_request(request_id, route="pipeline", outcome="ok")
+            db.finalize_request(request_id, route="pipeline", outcome="ok",
+                                llm_usage=result.get("llm_usage"))
         return {
             "status": "ok",
             "source_mode": result.get("source_mode"),

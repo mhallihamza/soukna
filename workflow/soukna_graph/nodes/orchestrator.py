@@ -7,7 +7,7 @@ from __future__ import annotations
 from typing import Any
 
 from .. import db
-from ..llm import call_llm_json, make_llm
+from ..llm import call_llm_json, make_llm, merge_usage
 from ..prompts import ORCHESTRATOR_SYSTEM, today_hint
 from ..state import AgentState
 from ..tracing import traced
@@ -45,7 +45,7 @@ def orchestrator_node(state: AgentState) -> dict[str, Any]:
 
     llm, _mode = make_llm()
     prompt = ORCHESTRATOR_SYSTEM + today_hint() + f"\n\nMESSAGE : {message!r}"
-    parsed, _used = call_llm_json(llm, prompt, fallback)
+    parsed, _used, usage = call_llm_json(llm, prompt, fallback)
 
     intent = parsed.get("intent")
     if intent not in ALLOWED_INTENTS:
@@ -64,4 +64,5 @@ def orchestrator_node(state: AgentState) -> dict[str, Any]:
         "language": language,
         "extracted": extracted or {},
         "company": company,
+        "llm_usage": merge_usage(state, usage),
     }

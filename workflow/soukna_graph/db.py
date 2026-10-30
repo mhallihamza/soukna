@@ -211,6 +211,9 @@ ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_by TEXT;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS admin_note TEXT;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS tokens_in INT DEFAULT 0;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS tokens_out INT DEFAULT 0;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS llm_cost_usd NUMERIC(12, 6) DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
 CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_lower ON waitlist (lower(email));
@@ -550,16 +553,23 @@ def start_request(message_id: str, sender_phone: str) -> str:
 
 
 def finalize_request(request_id: str, *, route: str, outcome: str,
-                     error: str | None = None) -> None:
+                     error: str | None = None,
+                     llm_usage: dict[str, int] | None = None) -> None:
+    usage = llm_usage or {}
+    tokens_in, tokens_out = usage.get("in", 0), usage.get("out", 0)
+    from . import config
+    cost = (tokens_in / 1_000_000 * config.LLM_PRICE_INPUT
+            + tokens_out / 1_000_000 * config.LLM_PRICE_OUTPUT)
     execute(
         """
         UPDATE lg_requests
         SET route = %s, outcome = %s, error = %s,
+            tokens_in = %s, tokens_out = %s, llm_cost_usd = %s,
             finished_at = now(), latency_ms =
               GREATEST(0, (EXTRACT(EPOCH FROM (now() - started_at)) * 1000)::INT)
         WHERE id = %s
         """,
-        (route, outcome, error, request_id),
+        (route, outcome, error, tokens_in, tokens_out, round(cost, 6), request_id),
     )
 
 
@@ -582,7 +592,8 @@ def mark_seen(message_id: str) -> bool:
 
 def requests_since(hours: float = 24, limit: int = 100) -> list[dict[str, Any]]:
     return query(
-        "SELECT id, message_id, sender_phone, route, outcome, error, started_at, latency_ms "
+        "SELECT id, message_id, sender_phone, route, outcome, error, started_at, "
+        "latency_ms, tokens_in, tokens_out, llm_cost_usd "
         "FROM lg_requests WHERE started_at > now() - %s * INTERVAL '1 hour' "
         "ORDER BY started_at DESC LIMIT %s",
         (hours, limit),
@@ -683,7 +694,10 @@ def request_stats(hours: float = 24) -> dict[str, Any]:
                count(*) FILTER (WHERE route = 'pipeline') AS pipeline_runs,
                ROUND(AVG(latency_ms)::numeric, 0) AS avg_latency_ms,
                ROUND(percentile_cont(0.95) WITHIN GROUP
-                     (ORDER BY latency_ms)::numeric, 0) AS p95_latency_ms
+                     (ORDER BY latency_ms)::numeric, 0) AS p95_latency_ms,
+               COALESCE(SUM(tokens_in), 0) AS tokens_in,
+               COALESCE(SUM(tokens_out), 0) AS tokens_out,
+               ROUND(COALESCE(SUM(llm_cost_usd), 0)::numeric, 4) AS llm_cost_usd
         FROM lg_requests
         WHERE started_at > now() - %s * INTERVAL '1 hour'
         """,

@@ -189,6 +189,9 @@ ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_at TIMESTAMPTZ;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS invited_by TEXT;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS activated_at TIMESTAMPTZ;
 ALTER TABLE waitlist ADD COLUMN IF NOT EXISTS admin_note TEXT;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS tokens_in INT DEFAULT 0;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS tokens_out INT DEFAULT 0;
+ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS llm_cost_usd NUMERIC(12, 6) DEFAULT 0;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_lower ON waitlist (lower(email));
 
 -- Index de lecture dashboard

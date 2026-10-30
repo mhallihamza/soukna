@@ -38,6 +38,7 @@ type Summary = {
   requests: {
     total: number; ok: number; errors: number; pipeline_runs: number;
     avg_latency_ms: number | null; p95_latency_ms: number | null;
+    tokens_in: number | string; tokens_out: number | string; llm_cost_usd: number | string;
   };
   agents: AgentStat[];
   last_pipeline_run: {
@@ -60,6 +61,9 @@ type RequestRow = {
   error: string | null;
   started_at: string;
   latency_ms: number | null;
+  tokens_in: number | null;
+  tokens_out: number | null;
+  llm_cost_usd: number | string | null;
 };
 
 type Trace = {
@@ -122,7 +126,7 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     running: "Exécution…",
     agentKpiCalls: "Appels Agents (24h)",
     agentKpiLatency: "Latence Moyenne Pipeline",
-    agentKpiErrors: "Erreurs (24h)",
+    agentKpiCost: "Coût LLM Estimé (24h)",
     agentKpiBreakers: "Circuit Breakers",
     allActive: "Tous Actifs",
     someOff: "coupé(s)",
@@ -153,6 +157,8 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     thCorrId: "Correlation ID",
     thAction: "Action / Tâche Pipeline",
     thDuration: "Durée",
+    thTokens: "Tokens (in/out)",
+    thCost: "Coût",
     thDiag: "Diagnostic",
     inspectBtn: "Inspecter ↗",
     noRequests: "Aucune requête sur la fenêtre.",
@@ -198,7 +204,7 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     running: "جارٍ التنفيذ…",
     agentKpiCalls: "اتصالات الوكلاء (24 ساعة)",
     agentKpiLatency: "متوسط تأخير المسار",
-    agentKpiErrors: "الأخطاء (24 ساعة)",
+    agentKpiCost: "تكلفة نموذج اللغة (24 ساعة)",
     agentKpiBreakers: "قواطع الدائرة",
     allActive: "جميعها نشطة",
     someOff: "مقطوع",
@@ -229,6 +235,8 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     thCorrId: "معرف الارتباط",
     thAction: "مهمة المسار",
     thDuration: "المدة",
+    thTokens: "الرموز (داخل/خارج)",
+    thCost: "التكلفة",
     thDiag: "التشخيص",
     inspectBtn: "فحص ↗",
     noRequests: "لا توجد طلبات في هذه الفترة.",
@@ -478,7 +486,7 @@ export default function AdminPage() {
               </thead>
               <tbody className="divide-y divide-line/40">
                 {companies.length === 0 && (
-                  <tr><td colSpan={6} className="py-4 px-3 text-muted text-center">{t("noRequests")}</td></tr>
+                  <tr><td colSpan={8} className="py-4 px-3 text-muted text-center">{t("noRequests")}</td></tr>
                 )}
                 {[...companies].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")).map((c) => (
                   <tr key={c.id}>
@@ -580,7 +588,9 @@ export default function AdminPage() {
              `${agentCalls ? Math.round((1 - agentErrors / agentCalls) * 1000) / 10 : 100} % ${lang === "fr" ? "de réussite" : "نسبة النجاح"}`)}
         {kpi(t("agentKpiLatency"), fmtMs(summary?.requests.avg_latency_ms),
              `P95 ${fmtMs(summary?.requests.p95_latency_ms)}`)}
-        {kpi(t("agentKpiErrors"), String(agentErrors), t("agentKpiErrors"), agentErrors ? "text-redbrand" : "text-ink")}
+        {kpi(t("agentKpiCost"),
+             `$ ${Number(summary?.requests.llm_cost_usd || 0).toFixed(4)}`,
+             `≈ ${Number(summary?.requests.tokens_in || 0).toLocaleString("fr-FR")} in · ${Number(summary?.requests.tokens_out || 0).toLocaleString("fr-FR")} out tokens`)}
         {kpi(t("agentKpiBreakers"),
              config && !config.portal_enabled ? "1 " + t("someOff") : t("allActive"),
              config?.llm_key_present ? (lang === "fr" ? "LLM Mistral disponible" : "نموذج Mistral متاح") : (lang === "fr" ? "Mode heuristique" : "الوضع الاستدلالي"),
@@ -691,12 +701,14 @@ export default function AdminPage() {
                 <th className="py-3 px-3">{t("thAction")}</th>
                 <th className="py-3 px-3">{t("thStatus")}</th>
                 <th className="py-3 px-3">{t("thDuration")}</th>
+                <th className="py-3 px-3">{t("thTokens")}</th>
+                <th className="py-3 px-3">{t("thCost")}</th>
                 <th className="py-3 px-3 text-center">{t("thDiag")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line/40">
               {requests.length === 0 && (
-                <tr><td colSpan={6} className="py-4 px-3 text-muted text-center">{t("noRequests")}</td></tr>
+                <tr><td colSpan={8} className="py-4 px-3 text-muted text-center">{t("noRequests")}</td></tr>
               )}
               {requests.map((r) => (
                 <tr key={r.id}>
@@ -713,6 +725,10 @@ export default function AdminPage() {
                     </span>
                   </td>
                   <td className="py-3 px-3">{fmtMs(r.latency_ms)}</td>
+                  <td className="py-3 px-3 font-mono text-[11px] text-muted">
+                    {(Number(r.tokens_in) || 0).toLocaleString("fr-FR")} / {(Number(r.tokens_out) || 0).toLocaleString("fr-FR")}
+                  </td>
+                  <td className="py-3 px-3 font-mono">${Number(r.llm_cost_usd || 0).toFixed(4)}</td>
                   <td className="py-3 px-3 text-center">
                     <button onClick={() => openTrace(r.id)}
                             className={`font-bold hover:underline ${r.outcome === "ok" ? "text-greenbrand" : "text-terra"}`}>
@@ -742,6 +758,10 @@ export default function AdminPage() {
                   <h2 className="font-display font-bold text-xl text-ink leading-tight mt-1">Trace {trace.request.id.slice(0, 8)}</h2>
                   <p className="text-xs text-muted mt-1">
                     {trace.request.route} · {trace.request.outcome} · {fmtMs(trace.request.latency_ms)}
+                  </p>
+                  <p className="text-[11px] font-semibold text-ink mt-1">
+                    Tokens : {(Number(trace.request.tokens_in) || 0).toLocaleString("fr-FR")} in · {(Number(trace.request.tokens_out) || 0).toLocaleString("fr-FR")} out
+                    {" "}· Coût : ${Number(trace.request.llm_cost_usd || 0).toFixed(4)}
                   </p>
                 </div>
                 <button onClick={() => setTrace(null)} type="button"
