@@ -17,6 +17,16 @@ def run_node(state):
     return asyncio.run(faq.faq_node(state))
 
 
+@pytest.fixture(autouse=True)
+def fake_astra_env(monkeypatch):
+    """Aucun .env en CI : les credentials Astra sont simulés pour tous
+    les tests (sinon _base_url() lève astra_not_configured avant même
+    que requests.post monkeypatché soit appelé)."""
+    monkeypatch.setattr(config, "ASTRA_DB_API_ENDPOINT",
+                        "https://fake-astra-test.apps.astra.datastax.com")
+    monkeypatch.setattr(config, "ASTRA_DB_TOKEN", "AstraCS:fake-token-offline-tests")
+
+
 # ---------------------------------------------------------------------
 # Découpage (pur, sans réseau)
 # ---------------------------------------------------------------------
