@@ -1,8 +1,11 @@
 // Client API : token localStorage + en-tête Authorization + gestion 401.
 "use client";
 
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// On enlève tout `/` final : NEXT_PUBLIC_API_URL se grave à l'image de
+// build — un slash traînant donne //auth/login (redirection + CORS cassé).
+export const API_URL = (
+  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+).replace(/\/+$/, "");
 
 export type Auth = { token: string; role: "admin" | "entreprise" };
 
