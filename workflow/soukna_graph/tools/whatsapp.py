@@ -39,6 +39,10 @@ def send_whatsapp(phone: str, text: str) -> tuple[bool, str]:
         # Meta répond parfois 200 avec un corps d'erreur : à traiter.
         body = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
         if r.status_code == 200 and not body.get("error"):
+            # 200 SANS wamid (contacts/messages vides) = rejet silencieux :
+            # typiquement un destinataire non vérifié sur le numéro de test.
+            if not (body.get("messages") or []):
+                return False, "meta_rejected_silently"
             return True, "sent"
         err = body.get("error") or {}
         return False, f"meta_{err.get('code', r.status_code)}:{str(err.get('message', ''))[:120]}"

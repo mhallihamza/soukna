@@ -624,6 +624,42 @@ def _notify_activation(wid: str, client_email: str, trial_days: int) -> None:
         )
 
 
+def _notify_admin_invite(row: dict[str, Any], client_email: str,
+                         email_sent: bool, wa_sent: bool,
+                         admin_email: str) -> None:
+    """Quand l'admin invite un client, l'admin reçoit la confirmation sur
+    ses DEUX canaux : email (MON_ALERT_EMAIL ou ADMIN_USERNAME) et
+    WhatsApp (MON_ALERT_WHATSAPP). Échec d'un canal = silencieux."""
+    company = row.get("company_name", "?")
+    canaux_client = "+".join(
+        c for c, ok in (("email", email_sent), ("whatsapp", wa_sent)) if ok
+    ) or "aucun (lien à copier manuellement)"
+
+    to_admin = (config.MON_ALERT_EMAIL or admin_email or
+                config.ADMIN_USERNAME).strip()
+    if config.email_ready() and to_admin:
+        subject = f"Soukna — invitation envoyée : {company}"
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#fffdf9;border:1px solid #dcd6cb;border-radius:12px">
+          <h2 style="color:#0f1e2e;margin:0 0 8px">Invitation envoyée ✉️</h2>
+          <p style="color:#66717b;font-size:14px;line-height:1.6">
+            <b>{company}</b> ({client_email}) vient d'être invité.<br>
+            Canaux reçus par le client : <b>{canaux_client}</b>.<br>
+            Le lien d'invitation expire dans {INVITE_DAYS} jours (usage unique).
+          </p>
+        </div>"""
+        emailer.send_email_html(to_admin, subject, html)
+
+    owner_wa = config.MON_ALERT_WHATSAPP
+    if owner_wa:
+        whatsapp.send_whatsapp(
+            owner_wa,
+            f"✉️ Invitation Soukna envoyée\n"
+            f"Entreprise : {company}\nClient : {client_email}\n"
+            f"Canaux : {canaux_client} · expire dans {INVITE_DAYS} jours.",
+        )
+
+
 def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
     """Logique partagée inviter / renvoyer : email + WhatsApp + statut."""
     row = db.waitlist_row(wid)
@@ -673,6 +709,7 @@ def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
         )
         canaux = "+".join(c for c, ok in (("email", email_sent), ("whatsapp", wa_sent)) if ok)
         db.audit(admin_email, "invite", wid, f"invitation via {canaux} → {email}")
+        _notify_admin_invite(row, email, email_sent, wa_sent, admin_email)
 
     return {
         "row": db.waitlist_row(wid),
@@ -815,6 +852,8 @@ def onboarding_confirm(token: str, body: OnboardingBody) -> dict[str, Any]:
     )
     db.activate_trial_company(str(company["id"]), waitlist_id=wid,
                               owner_email=email, lang=lang, trial_days=TRIAL_DAYS)
+    # Canaux de livraison : email toujours actif, WhatsApp si numéro fourni.
+    db.set_channel_prefs(str(company["id"]), bool(body.whatsapp), True)
     db.waitlist_update(wid, status="active", activated_at=db.utcnow())
     db.mark_token_used(token)
     db.audit(email, "activate", wid,
