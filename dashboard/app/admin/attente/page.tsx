@@ -130,14 +130,26 @@ export default function WaitlistPage() {
   async function action(row: WaitlistRow, verb: "invite" | "resend" | "reject" | "restore") {
     setBusyId(row.id); setError("");
     try {
-      const updated = await api<WaitlistRow>(`/admin/waitlist/${row.id}/${verb}`, {
+      // invite/resend renvoient un enveloppe { row, email_sent, email_detail,
+      // link } ; reject/restore renvoient la ligne brute — on normalise.
+      const res = await api<
+        WaitlistRow & { row?: WaitlistRow; email_sent?: boolean; link?: string | null }
+      >(`/admin/waitlist/${row.id}/${verb}`, {
         method: "POST", body: JSON.stringify({}),
       });
+      const updated: WaitlistRow = res.row ?? res;
       replaceRow(updated);
-      if (verb === "invite") showToast(`Invitation envoyée à ${updated.email}`);
-      if (verb === "resend") showToast(`Nouvelle invitation envoyée à ${updated.email}`);
-      if (verb === "reject") showToast("Inscription rejetée");
-      if (verb === "restore") showToast("Remise en attente");
+      if (res.email_sent === false && (verb === "invite" || verb === "resend")) {
+        showToast("Email non envoyé (SMTP non configuré) — utilisez « Copier le lien » pour WhatsApp");
+      } else if (verb === "invite") {
+        showToast(`Invitation envoyée à ${updated.email}`);
+      } else if (verb === "resend") {
+        showToast(`Nouvelle invitation envoyée à ${updated.email}`);
+      } else if (verb === "reject") {
+        showToast("Inscription rejetée");
+      } else if (verb === "restore") {
+        showToast("Remise en attente");
+      }
       refreshCounts();
     } catch (e) {
       setError((e as Error).message);
