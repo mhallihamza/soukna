@@ -131,3 +131,16 @@ jobs:
           context: ./workflow
           push: true
           tags: ghcr.io/${{ steps.img.outputs.owner }}/soukna-workflow:latest
+
+      # Render (image-backed) ne redéploie pas seul au nouveau digest :
+      # les deploy hooks déclenchent le redéploiement des deux services.
+      # Créer les secrets RENDER_DEPLOY_HOOK_WORKFLOW / _DASHBOARD après
+      # la création des services sur Render (Settings → Deploy Hooks).
+      - name: Déclencher les déploiements Render (hooks)
+        env:
+          HOOK_WORKFLOW: ${{ secrets.RENDER_DEPLOY_HOOK_WORKFLOW }}
+          HOOK_DASHBOARD: ${{ secrets.RENDER_DEPLOY_HOOK_DASHBOARD }}
+        if: env.HOOK_WORKFLOW != '' && env.HOOK_DASHBOARD != ''
+        run: |
+          curl -fsS "$HOOK_WORKFLOW" > /dev/null && echo "hook workflow OK"
+          curl -fsS "$HOOK_DASHBOARD" > /dev/null && echo "hook dashboard OK"
