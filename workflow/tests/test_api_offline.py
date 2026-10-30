@@ -56,6 +56,10 @@ def test_auth_required_on_admin_endpoints():
     assert client.post("/run").status_code == 401
 
 
-def test_login_invalid():
+def test_login_invalid(monkeypatch):
+    # Hors-ligne : on neutralise les deux lectures DB du login (users,
+    # companies). Le repli admin .env ne matche pas ("wrong" != mdp).
+    monkeypatch.setattr("api.db.get_user_by_email", lambda email: None)
+    monkeypatch.setattr("api.db.query", lambda sql, params=(): [])
     r = client.post("/auth/login", json={"username": "admin", "password": "wrong"})
     assert r.status_code == 401
