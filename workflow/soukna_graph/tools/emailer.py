@@ -12,8 +12,10 @@ from .. import config
 
 def send_email(to: str, subject: str, body: str) -> tuple[bool, str]:
     """Envoie un email texte. Retourne (envoyé, détail)."""
-    if not config.email_ready() or not to:
+    if not config.email_ready():
         return False, "email_not_configured"
+    if not to:
+        return False, "recipient_missing"
     try:
         msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = subject
@@ -31,8 +33,10 @@ def send_email(to: str, subject: str, body: str) -> tuple[bool, str]:
 
 def send_email_html(to: str, subject: str, html: str) -> tuple[bool, str]:
     """Envoie un email HTML (invitation client). Retourne (envoyé, détail)."""
-    if not config.email_ready() or not to:
+    if not config.email_ready():
         return False, "email_not_configured"
+    if not to:
+        return False, "recipient_missing"
     try:
         msg = MIMEText(html, "html", "utf-8")
         msg["Subject"] = subject
