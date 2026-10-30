@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from soukna_graph import config, db
+from soukna_graph import config, db, monitoring
 from soukna_graph.graph import build_graph
 from soukna_graph.tools import emailer
 
@@ -507,6 +507,18 @@ def observability_summary(
             """
         )[0],
     }
+
+
+@app.get("/monitoring/report")
+def monitoring_report(_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Rapport de santé complet de l'agent de monitoring.
+
+    Les alertes (email/WhatsApp) ne sont envoyées que par la tâche
+    planifiée (scripts/monitor.py) — pas par la consultation du rapport.
+    """
+    report = monitoring.run_checks()
+    report["last_alert"] = db.get_state("monitoring_alert")
+    return report
 
 
 @app.get("/observability/requests/{request_id}/logs")

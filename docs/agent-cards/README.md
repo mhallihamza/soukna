@@ -21,5 +21,6 @@ même commit** que le code.
 | Matching | `soukna-matching-agent` | Adéquation opportunité ↔ profil entreprise (Match /100) |
 | Verdict | `soukna-verdict-agent` | Verdict indicatif GO / À ÉTUDIER / NO-GO + risques |
 | Digest | `soukna-digest-agent` | Synthèse quotidienne multi-canaux (WhatsApp / email / dashboard) |
+| Monitoring | `soukna-monitoring-agent` | Santé plateforme (DB, erreurs, latence, coût, fraîcheur, envois) + alertes |
 
 Propriétaire : **HAMZA MHALLI** · Équipe : **Aba technology**

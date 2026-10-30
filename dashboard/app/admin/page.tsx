@@ -80,6 +80,36 @@ type AdminConfig = {
   whatsapp_ready: boolean;
 };
 
+// Rapport de l'agent de monitoring (GET /monitoring/report, admin).
+type MonitorCheck = { id: string; status: "ok" | "warn" | "crit"; value: unknown; detail: string };
+
+type MonitorReport = {
+  status: "ok" | "warn" | "crit";
+  generated_at: string;
+  window_hours: number;
+  checks: MonitorCheck[];
+  stats: Record<string, unknown> & { requests?: Record<string, unknown> };
+  config: Record<string, boolean>;
+  last_alert: { degraded: string[]; ts: number; status: string } | null;
+};
+
+const STATUS_BADGE: Record<string, string> = {
+  ok: "bg-greenbg text-greenbrand",
+  warn: "bg-amberbg text-amberbrand",
+  crit: "bg-redbg text-redbrand",
+};
+
+const CHECK_LABELS: Record<string, { fr: string; ar: string }> = {
+  error_rate: { fr: "Taux d'erreurs API", ar: "نسبة أخطاء الواجهة" },
+  latency: { fr: "Latence p95 des agents", ar: "زمن استجابة الوكلاء" },
+  llm_cost: { fr: "Coût LLM de la fenêtre", ar: "تكلفة النموذج" },
+  llm_fallback: { fr: "Repli heuristique (LLM dégradé)", ar: "الرجوع عن النموذج" },
+  portal_freshness: { fr: "Fraîcheur du portail", ar: "تحديث بوابة الصفقات" },
+  pipeline_freshness: { fr: "Fraîcheur du pipeline", ar: "تحديث المسار" },
+  digest_whatsapp: { fr: "Livraison WhatsApp du digest", ar: "تسليم الملخص عبر واتساب" },
+  db_connectivity: { fr: "Base de données joignable", ar: "الاتصال بقاعدة البيانات" },
+};
+
 const PLAN_PRICE: Record<string, number> = { decouverte: 0, pro: 199, business: 499 };
 
 const AGENT_LABELS: Record<string, { fr: string; ar: string }> = {
@@ -98,6 +128,24 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     tabFinances: "Finances & Abonnés",
     tabAgents: "Observabilité Agents & IA",
     tabLogs: "Requêtes & Erreurs Pipeline",
+    tabMonitor: "Monitoring Plateforme",
+    monStatus: "Statut global",
+    monWindow: "Fenêtre analysée",
+    monChecks: "Vérifications",
+    monCheckId: "Vérification",
+    monValue: "Valeur",
+    monDetail: "Détail",
+    monRefresh: "Rafraîchir le rapport",
+    monLastAlert: "Dernière alerte envoyée",
+    monNever: "aucune (plateforme saine) ",
+    monStats: "Activité sur la fenêtre",
+    monCompanies: "Entreprises actives",
+    monOpportunities: "Opportunités (total)",
+    monMatches: "Nouveaux matchs",
+    monDigests: "Synthèses livrées",
+    monSnapshot: "État des composants",
+    monNoReport: "Rapport indisponible.",
+    monGenerated: "Rapport généré",
     kpiMrr: "Revenu Mensuel (MRR)",
     kpiMrrSub: "Pro 199 DH · Business 499 DH",
     kpiSubs: "Abonnés Payants Actifs",
@@ -176,6 +224,24 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     tabFinances: "المالية والمشتركون",
     tabAgents: "مرقبة الوكلاء والذكاء الاصطناعي",
     tabLogs: "الطلبات وأخطاء المسار",
+    tabMonitor: "مراقبة المنصة",
+    monStatus: "الحالة العامة",
+    monWindow: "نطاق التحليل",
+    monChecks: "الفحوصات",
+    monCheckId: "الفحص",
+    monValue: "القيمة",
+    monDetail: "التفاصيل",
+    monRefresh: "تحديث التقرير",
+    monLastAlert: "آخر تنبيه مُرسل",
+    monNever: "لا شيء (المنصة سليمة)",
+    monStats: "النشاط في النطاق",
+    monCompanies: "الشركات النشطة",
+    monOpportunities: "الفرص (المجموع)",
+    monMatches: "توافقات جديدة",
+    monDigests: "ملخصات مُسلَّمة",
+    monSnapshot: "حالة المكونات",
+    monNoReport: "التقرير غير متوفر.",
+    monGenerated: "توليد التقرير",
     kpiMrr: "الإيراد الشهري المتكرر",
     kpiMrrSub: "Pro 199 درهم · Business 499 درهم",
     kpiSubs: "المشتركون النشطون",
@@ -265,7 +331,7 @@ function fmtS(s: number | string | null | undefined): string {
 
 export default function AdminPage() {
   const [lang, setLang] = useState<"fr" | "ar">("fr");
-  const [tab, setTab] = useState<"finances" | "agents" | "logs">("finances");
+  const [tab, setTab] = useState<"finances" | "agents" | "logs" | "monitor">("finances");
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
@@ -276,6 +342,7 @@ export default function AdminPage() {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [config, setConfig] = useState<AdminConfig | null>(null);
+  const [monitor, setMonitor] = useState<MonitorReport | null>(null);
   const [trace, setTrace] = useState<Trace | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
@@ -300,16 +367,18 @@ export default function AdminPage() {
   }, []);
 
   async function loadAll() {
-    const [s, c, o, cfg] = await Promise.all([
+    const [s, c, o, cfg, mon] = await Promise.all([
       api<Summary>("/observability/summary?hours=24"),
       api<Company[]>("/companies"),
       api<{ requests: RequestRow[] }>("/observability?hours=24"),
       api<AdminConfig>("/admin/config"),
+      api<MonitorReport>("/monitoring/report"),
     ]);
     setSummary(s);
     setCompanies(c || []);
     setRequests((o && o.requests) || []);
     setConfig(cfg);
+    setMonitor(mon);
   }
 
   function showToast(m: string) {
@@ -437,6 +506,7 @@ export default function AdminPage() {
           ["finances", "📊", t("tabFinances")],
           ["agents", "🤖", t("tabAgents")],
           ["logs", "🔍", t("tabLogs")],
+          ["monitor", "🩺", t("tabMonitor")],
         ] as const).map(([id, icon, label]) => (
           <button key={id} onClick={() => setTab(id)}
                   className={`tab-btn px-4 py-3 text-xs sm:text-sm font-medium text-muted hover:text-ink transition-all flex items-center gap-2 whitespace-nowrap ${tab === id ? "active" : ""}`}>
@@ -744,6 +814,111 @@ export default function AdminPage() {
     </section>
   );
 
+  // Valeur d'un check : nombre, liste d'entreprises ou objet (agent le plus lent)
+  function fmtCheckValue(v: unknown): string {
+    if (v == null) return "—";
+    if (Array.isArray(v)) return v.length ? v.join(", ") : "—";
+    if (typeof v === "object") return Object.entries(v as Record<string, unknown>)
+      .map(([k, x]) => `${k}=${x}`).join(" · ");
+    return String(v);
+  }
+
+  const monitoringEl = !monitor ? (
+    <section className="bg-white border border-line rounded-lg p-5 shadow-sm">
+      <h3 className="font-display font-bold text-base text-ink">{t("tabMonitor")}</h3>
+      <p className="text-xs text-muted mt-1">{t("monNoReport")}</p>
+    </section>
+  ) : (
+    <section className="space-y-6">
+      {/* Statut global + fenêtre + rafraîchissement */}
+      <div className="bg-white border border-line rounded-lg p-5 shadow-sm">
+        <div className="flex items-start justify-between">
+          <div>
+            <span className="text-[10px] uppercase font-bold tracking-wider text-terra">{t("monStatus")}</span>
+            <div className="flex items-center gap-3 mt-1">
+              <span className={`px-3 py-1 rounded font-bold text-sm ${STATUS_BADGE[monitor.status] || ""}`}>
+                {monitor.status.toUpperCase()}
+              </span>
+              <span className="text-xs text-muted">
+                {t("monWindow")} : {monitor.window_hours}h · {t("monGenerated")} {new Date(monitor.generated_at).toLocaleString(lang === "fr" ? "fr-FR" : "ar-MA")}
+              </span>
+            </div>
+            <p className="text-[11px] text-muted mt-2">
+              {t("monLastAlert")} : {monitor.last_alert
+                ? `${monitor.last_alert.degraded?.join(", ") || "—"} (${new Date(monitor.last_alert.ts * 1000).toLocaleString(lang === "fr" ? "fr-FR" : "ar-MA")})`
+                : t("monNever")}
+            </p>
+          </div>
+          <button onClick={loadAll}
+                  className="bg-paper hover:bg-line border border-line text-ink text-xs font-bold px-3 py-1.5 rounded transition-all">
+            {t("monRefresh")}
+          </button>
+        </div>
+      </div>
+
+      {/* Table des checks */}
+      <div className="bg-white border border-line rounded-lg p-5 shadow-sm">
+        <h3 className="font-display font-bold text-sm text-ink mb-3">{t("monChecks")}</h3>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs text-left rtl:text-right">
+            <thead>
+              <tr className="border-b border-line text-muted uppercase text-[10px]">
+                <th className="py-3 px-3">{t("monCheckId")}</th>
+                <th className="py-3 px-3">{t("thStatus")}</th>
+                <th className="py-3 px-3">{t("monValue")}</th>
+                <th className="py-3 px-3">{t("monDetail")}</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/40">
+              {monitor.checks.map((c) => (
+                <tr key={c.id}>
+                  <td className="py-3 px-3 font-semibold text-ink">{CHECK_LABELS[c.id]?.[lang] || c.id}</td>
+                  <td className="py-3 px-3">
+                    <span className={`px-2 py-0.5 rounded font-bold text-[10px] ${STATUS_BADGE[c.status] || ""}`}>{c.status}</span>
+                  </td>
+                  <td className="py-3 px-3 font-mono text-[11px]">{fmtCheckValue(c.value)}</td>
+                  <td className="py-3 px-3 text-muted">{c.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Activité de la fenêtre */}
+        <div className="bg-white border border-line rounded-lg p-5 shadow-sm">
+          <h3 className="font-display font-bold text-sm text-ink mb-3">{t("monStats")}</h3>
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              [t("monCompanies"), monitor.stats?.companies_active],
+              [t("monOpportunities"), monitor.stats?.opportunities],
+              [t("monMatches"), monitor.stats?.matches_new],
+              [t("monDigests"), monitor.stats?.digests_sent],
+            ].map(([label, v]) => (
+              <div key={String(label)} className="border border-line rounded-lg p-3">
+                <div className="text-[10px] font-bold text-muted uppercase tracking-wider">{String(label)}</div>
+                <div className="text-xl font-bold font-display text-ink mt-1">{Number(v ?? 0).toLocaleString("fr-FR")}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* État des composants (snapshot config) */}
+        <div className="bg-white border border-line rounded-lg p-5 shadow-sm">
+          <h3 className="font-display font-bold text-sm text-ink mb-3">{t("monSnapshot")}</h3>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(monitor.config || {}).map(([k, v]) => (
+              <span key={k} className={`px-2 py-1 rounded font-bold text-[10px] ${v ? "bg-greenbg text-greenbrand" : "bg-redbg text-redbrand"}`}>
+                {k} : {v ? "✓" : "✗"}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+
   const drawerEl = (
     <div className={`drawer-backdrop ${trace ? "open" : ""}`}
          onClick={(e) => { if (e.target === e.currentTarget) setTrace(null); }}
@@ -822,6 +997,7 @@ export default function AdminPage() {
         {tab === "finances" && financesEl}
         {tab === "agents" && agentsEl}
         {tab === "logs" && logsEl}
+        {tab === "monitor" && monitoringEl}
       </main>
       {drawerEl}
       {toast && (

@@ -1,0 +1,49 @@
+# =====================================================================
+# Agent Card — Monitoring (santé plateforme + alertes)
+# =====================================================================
+carte:
+  agent: SouknaMonitoringAgent
+  slug: soukna-monitoring-agent
+  version: "1.0.0"
+  proprietaire: "HAMZA MHALLI"
+  equipe: "Aba technology"
+  plateforme: "LangGraph 1.x + Postgres + SMTP + WhatsApp Cloud API"
+  runtime: "Hors StateGraph — API (GET /monitoring/report) ou scripts/monitor.py planifié"
+
+objectif: >
+  Observer en continu toute la plateforme : disponibilité de la base, taux
+  d'erreurs des requêtes, latence p95 par agent, coût LLM, repli heuristique
+  (LLM dégradé), fraîcheur du portail et du pipeline, livraisons WhatsApp
+  du digest. Détecter les dégradations AVANT les utilisateurs et alerter
+  l'administrateur (email, WhatsApp optionnel) avec anti-spam.
+
+outils:
+  - "Requêtes pgx : db.request_stats, db.agent_stats, db.query (window SQL)"
+  - "tools/emailer.py : alerte HTML (fr) vers ADMIN_USERNAME ou MON_ALERT_EMAIL"
+  - "tools/whatsapp.py : alerte texte optionnelle (MON_ALERT_WHATSAPP)"
+  - "Postgres : table monitor_state (dernier état d'alerte, clé JSON)"
+  - "Waitlist/API : GET /monitoring/report (admin) ; CLI : scripts/monitor.py"
+
+entrees:
+  - champ: config.MON_WINDOW_H
+    description: "Fenêtre d'analyse en heures (défaut 24)"
+  - champ: config.MON_MAX_*
+    description: "Seuils optionnels : erreur %, p95 s, coût $, fallback %, staleness h, cooldown h"
+
+sorties:
+  - champ: rapport
+    description: "Statut global (ok/warn/crit) + checks détaillés + stats + snapshot config"
+  - champ: alerts
+    description: "Email HTML et/ou WhatsApp envoyés si dégradation nouvelle ou cooldown écoulé"
+
+limites:
+  - "Ne modifie JAMAIS une donnée métier : lecture seule, hors monitor_state."
+  - "Une surveillance qui plante ne lève pas d'exception (rapport critique au pire)."
+  - "Pas d'auto-correction : l'agent alerte, l'humain décide."
+  - "Ne fait pas partie du graphe de chat : jamais déclenché par un utilisateur."
+
+securite:
+  - "Kill switch respecté : digest sans WhatsApp sous KILL_SWITCH est marqué ok (blocage attendu)."
+  - "Anti-spam : état persisté dans monitor_state, alerte répétée seulement après MON_ALERT_COOLDOWN_H."
+  - "Chaque envoi d'alerte passe par les canaux tracés (lg_logs via emailer/whatsapp)."
+  - "Sévérités bornées : ok < warn < crit, x2 du seuil = critique."

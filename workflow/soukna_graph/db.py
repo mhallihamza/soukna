@@ -149,6 +149,11 @@ CREATE TABLE IF NOT EXISTS lg_messages_seen (
     message_id TEXT PRIMARY KEY,
     seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
@@ -217,6 +222,11 @@ ALTER TABLE lg_requests ADD COLUMN IF NOT EXISTS llm_cost_usd NUMERIC(12, 6) DEF
 CREATE INDEX IF NOT EXISTS idx_matches_company_status ON matches(company_id, saved);
 CREATE INDEX IF NOT EXISTS idx_matches_company_created ON matches(company_id, created_at DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_email_lower ON waitlist (lower(email));
+CREATE TABLE IF NOT EXISTS monitor_state (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 """
 
 # Le formulaire de la landing écrit dans waitlist via la clé publishable
@@ -710,6 +720,20 @@ def logs_for_request(request_id: str) -> list[dict[str, Any]]:
         "SELECT agent, duration_s, detail, created_at FROM lg_logs "
         "WHERE request_id = %s ORDER BY created_at",
         (request_id,),
+    )
+
+
+def get_state(key: str) -> dict[str, Any] | None:
+    """État persistant clé→JSON (ex. dernier état d'alerte du monitoring)."""
+    rows = query("SELECT value FROM monitor_state WHERE key = %s", (key,))
+    return rows[0]["value"] if rows else None
+
+
+def set_state(key: str, value: dict[str, Any]) -> None:
+    execute(
+        "INSERT INTO monitor_state (key, value, updated_at) VALUES (%s, %s, now()) "
+        "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+        (key, json.dumps(value, ensure_ascii=False)),
     )
 
 

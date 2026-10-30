@@ -102,3 +102,16 @@ TOKEN_TTL_HOURS = int(os.getenv("TOKEN_TTL_HOURS", "12"))
 CORS_ORIGINS = [o.strip() for o in os.getenv(
     "CORS_ORIGINS", "http://localhost:3000,http://localhost:3001,http://localhost:3002"
 ).split(",") if o.strip()]
+
+# --- Agent de monitoring (seuils optionnels, défauts raisonnables) ------
+MON_WINDOW_H = float(os.getenv("MON_WINDOW_H", "24"))            # fenêtre d'analyse
+MON_MAX_ERROR_RATE = float(os.getenv("MON_MAX_ERROR_RATE", "20"))  # % requêtes en erreur
+MON_MAX_P95_S = float(os.getenv("MON_MAX_P95_S", "120"))          # latence p95 par agent
+MON_MAX_DAILY_COST_USD = float(os.getenv("MON_MAX_DAILY_COST_USD", "5"))
+MON_MAX_FALLBACK_PCT = float(os.getenv("MON_MAX_FALLBACK_PCT", "50"))  # % sans LLM
+MON_MAX_PORTAL_STALENESS_H = float(os.getenv("MON_MAX_PORTAL_STALENESS_H", "36"))
+MON_MAX_PIPELINE_STALENESS_H = float(os.getenv("MON_MAX_PIPELINE_STALENESS_H", "30"))
+MON_ALERT_COOLDOWN_H = float(os.getenv("MON_ALERT_COOLDOWN_H", "6"))   # anti-spam
+MON_ALERT_EMAIL = os.getenv("MON_ALERT_EMAIL", "")   # vide = ADMIN_USERNAME
+MON_ALERT_WHATSAPP = os.getenv("MON_ALERT_WHATSAPP", "")  # vide = pas d'alerte WA
+
