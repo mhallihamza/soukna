@@ -69,3 +69,44 @@ jobs:
           name: eval-report
           path: workflow/artifacts/eval_report.json
           if-no-files-found: warn
+
+  docker-publish:
+    # Images GHCR publiées seulement si lint + tests passent, sur push
+    # vers main/master. Blitz (déploiement depuis ghcr.io) récupère le
+    # tag `latest` lors de sa mise à jour nocturne.
+    if: >-
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master')
+    needs: structure-and-unit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # ghcr.io exige un chemin d'image en minuscules
+      - id: img
+        run: echo "owner=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # URL de l'API gravée dans le bundle Next.js au build :
+      # la définir dans Settings > Secrets and variables > Actions >
+      # Variables (NEXT_PUBLIC_API_URL), ex. https://soukna-api.<toi>.blitz.cloud
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./dashboard
+          push: true
+          build-args: NEXT_PUBLIC_API_URL=${{ vars.NEXT_PUBLIC_API_URL || 'http://localhost:8000' }}
+          tags: ghcr.io/${{ steps.img.outputs.owner }}/soukna-dashboard:latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./workflow
+          push: true
+          tags: ghcr.io/${{ steps.img.outputs.owner }}/soukna-workflow:latest

@@ -22,9 +22,12 @@ services:
       retries: 3
 
   dashboard:
-    build: ./dashboard
-    environment:
-      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    # NEXT_PUBLIC_* est gravé au build, pas au runtime : passer en
+    # build-arg (ou docker compose build --build-arg ...).
+    build:
+      context: ./dashboard
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports:
       - "3000:3000"
     restart: unless-stopped
