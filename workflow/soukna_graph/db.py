@@ -39,7 +39,10 @@ def putconn(conn: psycopg.Connection) -> None:
 def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:
     conn = connect()
     try:
-        return conn.execute(sql, params).fetchall()
+        # None (et non ()) quand aucun paramètre : psycopg3 ignore alors la
+        # validation des placeholders — un % littéral (ex. LIKE 'eval-%')
+        # lève sinon "only '%s', '%b', '%t' are allowed as placeholders".
+        return conn.execute(sql, params or None).fetchall()
     finally:
         putconn(conn)
 
@@ -47,7 +50,7 @@ def query(sql: str, params: tuple | list = ()) -> list[dict[str, Any]]:
 def execute(sql: str, params: tuple | list = ()) -> int:
     conn = connect()
     try:
-        cur = conn.execute(sql, params)
+        cur = conn.execute(sql, params or None)
         return cur.rowcount
     finally:
         putconn(conn)
