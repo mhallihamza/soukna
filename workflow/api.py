@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from soukna_graph import config, db, monitoring
 from soukna_graph.graph import build_graph
-from soukna_graph.tools import emailer
+from soukna_graph.tools import emailer, whatsapp
 
 app = FastAPI(title="Soukna Workflow API", version="1.0.0")
 app.add_middleware(
@@ -579,13 +579,59 @@ def _invite_email_html(company_name: str, link: str, lang: str) -> tuple[str, st
     return subject, html
 
 
+def _invite_wa_text(company_name: str, link: str, lang: str) -> str:
+    """Message WhatsApp d'invitation, dans la langue du client, lien unique."""
+    if lang == "ar":
+        return (
+            f"مرحباً {company_name} 👋\n\n"
+            "تمت دعوتك للانضمام إلى Soukna، منصة ذكاء طلبات العروض العمومية بالمغرب.\n"
+            f"فعّل حسابك من هنا (الرابط صالح {INVITE_DAYS} أيام ولمرة واحدة) :\n{link}"
+        )
+    return (
+        f"Bonjour {company_name} 👋\n\n"
+        "Vous êtes invité à rejoindre Soukna, l'intelligence des marchés publics au Maroc.\n"
+        f"Activez votre compte ici (lien valable {INVITE_DAYS} jours, usage unique) :\n{link}"
+    )
+
+
+def _notify_activation(wid: str, client_email: str, trial_days: int) -> None:
+    """Nouvelle opération d'information : quand un client active son compte
+    (fin d'onboarding), l'admin émetteur reçoit un email et le propriétaire
+    un WhatsApp (numéro d'alerte MON_ALERT_WHATSAPP, même canal que le
+    monitoring). Échec d'un canal = silencieux, jamais bloquant."""
+    row = db.waitlist_row(wid)
+    if not row:
+        return
+    to_admin = (row.get("invited_by") or "").strip()  # email de l'admin émetteur
+    if config.email_ready() and to_admin:
+        subject = f"Soukna — client activé : {row['company_name']}"
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px;background:#fffdf9;border:1px solid #dcd6cb;border-radius:12px">
+          <h2 style="color:#0f1e2e;margin:0 0 8px">Nouveau client activé 🎉</h2>
+          <p style="color:#66717b;font-size:14px;line-height:1.6">
+            <b>{row['company_name']}</b> vient d'activer son compte Soukna ({client_email}).<br>
+            Essai gratuit de {trial_days} jours démarré — l'onboarding est terminé.
+          </p>
+        </div>"""
+        emailer.send_email_html(to_admin, subject, html)
+    owner_wa = config.MON_ALERT_WHATSAPP
+    if owner_wa:
+        whatsapp.send_whatsapp(
+            owner_wa,
+            f"✅ Nouveau client activé sur Soukna\n"
+            f"Entreprise : {row['company_name']}\nEmail : {client_email}\n"
+            f"Essai gratuit démarré ({trial_days} jours).",
+        )
+
+
 def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
-    """Logique partagée inviter / renvoyer : email + profil + statut + audit."""
+    """Logique partagée inviter / renvoyer : email + WhatsApp + statut."""
     row = db.waitlist_row(wid)
     if not row:
         raise HTTPException(404, "Ligne d'attente introuvable")
     email = (row["email"] or "").strip().lower()
     lang = row.get("lang") or "fr"
+    phone = (row.get("whatsapp") or "").strip()
 
     if row["status"] == "active":
         raise HTTPException(409, "Ce client est déjà actif — aucune nouvelle invitation.")
@@ -594,18 +640,25 @@ def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
             409, "Un compte existe déjà pour cet email — invitation impossible (pas de doublon)."
         )
 
-    # 1. Lien d'invitation à usage unique.
+    # 1. Lien d'invitation à usage unique, partagé par les deux canaux.
     token = db.create_invite_token(wid, email, days=INVITE_DAYS, created_by=admin_email)
     link = f"{config.APP_URL}/onboarding?token={token}"
 
     # 2. Email d'invitation dans la langue du client.
     subject, html = _invite_email_html(row["company_name"], link, lang)
-    sent, detail = emailer.send_email_html(email, subject, html)
+    email_sent, email_detail = emailer.send_email_html(email, subject, html)
 
-    # 3. Profil entreprise pré-rempli (échec email ⇒ statut inchangé).
-    if sent:
+    # 3. WhatsApp : même lien à usage unique, si un numéro est connu.
+    wa_sent, wa_detail = False, "whatsapp_no_phone"
+    if phone:
+        wa_sent, wa_detail = whatsapp.send_whatsapp(
+            phone, _invite_wa_text(row["company_name"], link, lang)
+        )
+
+    # 4. Profil entreprise pré-rempli (aucun canal envoyé ⇒ statut inchangé).
+    if email_sent or wa_sent:
         company = db.upsert_company(
-            name=row["company_name"], email=email, phone=row.get("whatsapp"),
+            name=row["company_name"], email=email, phone=phone or None,
             sectors=[row["sector"]] if row.get("sector") else [],
             keywords=[], regions=[],
             size=row.get("company_size") or "pme",
@@ -618,13 +671,17 @@ def _do_invite(wid: str, admin_email: str) -> dict[str, Any]:
         db.waitlist_update(
             wid, status="invited", invited_at=db.utcnow(), invited_by=admin_email
         )
-        db.audit(admin_email, "invite", wid, f"email envoyé à {email}")
+        canaux = "+".join(c for c, ok in (("email", email_sent), ("whatsapp", wa_sent)) if ok)
+        db.audit(admin_email, "invite", wid, f"invitation via {canaux} → {email}")
 
     return {
         "row": db.waitlist_row(wid),
-        "email_sent": sent,
-        "email_detail": detail,
-        "link": link if not sent else None,  # lien visible seulement si l'email a échoué
+        "email_sent": email_sent,
+        "email_detail": email_detail,
+        "wa_sent": wa_sent,
+        "wa_detail": wa_detail,
+        # lien visible seulement si AUCUN canal n'a fonctionné (copie manuelle)
+        "link": link if not (email_sent or wa_sent) else None,
     }
 
 
@@ -762,6 +819,8 @@ def onboarding_confirm(token: str, body: OnboardingBody) -> dict[str, Any]:
     db.mark_token_used(token)
     db.audit(email, "activate", wid,
              f"essai démarré ({TRIAL_DAYS} jours), entreprise {company['id']}")
+    # Nouvelle opération : informer l'admin de l'activation du client.
+    _notify_activation(wid, email, TRIAL_DAYS)
 
     exp = time.time() + config.TOKEN_TTL_HOURS * 3600
     return {

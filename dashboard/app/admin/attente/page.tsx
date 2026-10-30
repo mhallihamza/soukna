@@ -133,14 +133,23 @@ export default function WaitlistPage() {
       // invite/resend renvoient un enveloppe { row, email_sent, email_detail,
       // link } ; reject/restore renvoient la ligne brute — on normalise.
       const res = await api<
-        WaitlistRow & { row?: WaitlistRow; email_sent?: boolean; link?: string | null }
+        WaitlistRow & {
+          row?: WaitlistRow;
+          email_sent?: boolean;
+          wa_sent?: boolean;
+          link?: string | null;
+        }
       >(`/admin/waitlist/${row.id}/${verb}`, {
         method: "POST", body: JSON.stringify({}),
       });
       const updated: WaitlistRow = res.row ?? res;
       replaceRow(updated);
-      if (res.email_sent === false && (verb === "invite" || verb === "resend")) {
-        showToast("Email non envoyé (SMTP non configuré) — utilisez « Copier le lien » pour WhatsApp");
+      if ((verb === "invite" || verb === "resend") && res.email_sent === false) {
+        showToast(
+          res.wa_sent
+            ? `Email non configuré — WhatsApp envoyé à ${updated.whatsapp}`
+            : "Email/WhatsApp non envoyés — utilisez « Copier le lien »",
+        );
       } else if (verb === "invite") {
         showToast(`Invitation envoyée à ${updated.email}`);
       } else if (verb === "resend") {
