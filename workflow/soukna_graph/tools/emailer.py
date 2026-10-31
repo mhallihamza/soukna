@@ -57,6 +57,15 @@ def _send_via_brevo(to: str, subject: str, html: str, text: str) -> tuple[bool, 
     if not config.BREVO_API_KEY:
         return None
     sender_email = _sender_email()
+    payload: dict = {
+        "sender": {"name": "Soukna", "email": sender_email},
+        "to": [{"email": to}],
+        "subject": subject,
+    }
+    if html:
+        payload["htmlContent"] = html
+    if text:
+        payload["textContent"] = text
     try:
         r = requests.post(
             _BREVO_URL,
@@ -65,13 +74,7 @@ def _send_via_brevo(to: str, subject: str, html: str, text: str) -> tuple[bool, 
                 "content-type": "application/json",
                 "accept": "application/json",
             },
-            json={
-                "sender": {"name": "Soukna", "email": sender_email},
-                "to": [{"email": to}],
-                "subject": subject,
-                "htmlContent": html,
-                "textContent": text,
-            },
+            json=payload,
             timeout=30,
         )
         if r.status_code == 201:
