@@ -87,3 +87,103 @@ def test_html_variant_same_behaviour(monkeypatch):
     ok, detail = emailer.send_email_html("a@b.c", "s", "<p>hi</p>")
     assert ok is True and detail == "sent"
     assert _FakeSMTP.calls == ["connect:465:True", "login", "send"]
+
+
+# --- Voie Brevo (HTTPS API) ---------------------------------------------
+
+def _setup_brevo(monkeypatch, status=201, payload=None):
+    monkeypatch.setattr(emailer.config, "BREVO_API_KEY", "xkeysib-test")
+    monkeypatch.setattr(emailer.config, "SMTP_FROM", "u@gmail.com")
+    sent = {}
+
+    class _R:
+        status_code = status
+        headers = {"content-type": "application/json"}
+        @staticmethod
+        def json():
+            return payload or {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent["url"], sent["headers"], sent["json"] = url, headers, json
+        return _R()
+
+    monkeypatch.setattr(emailer.requests, "post", fake_post)
+    return sent
+
+
+def test_brevo_success(monkeypatch):
+    sent = _setup_brevo(monkeypatch)
+    ok, detail = emailer.send_email_html("a@b.c", "Sujet", "<p>hi</p>")
+    assert ok is True and detail == "sent(brevo)"
+    assert sent["url"].endswith("/v3/smtp/email")
+    assert sent["headers"]["api-key"] == "xkeysib-test"
+    assert sent["json"]["to"] == [{"email": "a@b.c"}]
+    assert sent["json"]["htmlContent"] == "<p>hi</p>"
+
+
+def test_brevo_api_error(monkeypatch):
+    _setup_brevo(monkeypatch, status=400, payload={"message": "invalid key"})
+    ok, detail = emailer.send_email_html("a@b.c", "Sujet", "<p>x</p>")
+    assert ok is False and "brevo_400" in detail and "invalid key" in detail
+
+
+def test_brevo_network_error(monkeypatch):
+    _setup_brevo(monkeypatch)
+    def boom(*a, **k):
+        raise emailer.requests.RequestException("down")
+    monkeypatch.setattr(emailer.requests, "post", boom)
+    ok, detail = emailer.send_email_html("a@b.c", "Sujet", "<p>x</p>")
+    assert ok is False and detail == "brevo_network:RequestException"
+
+
+def test_no_brevo_key_falls_back_to_smtp(monkeypatch):
+    monkeypatch.setattr(emailer.config, "BREVO_API_KEY", "")
+    _setup(monkeypatch, 587)  # SMTP factice du haut du fichier
+    ok, detail = emailer.send_email("a@b.c", "s", "body")
+    assert ok is True and detail == "sent"
+
+
+# --- Voie Resend (HTTPS API, alternative à Brevo) ------------------------
+
+def _setup_resend(monkeypatch, status=200, payload=None):
+    monkeypatch.setattr(emailer.config, "RESEND_API_KEY", "re_test")
+    monkeypatch.setattr(emailer.config, "SMTP_FROM", "u@gmail.com")
+    sent = {}
+
+    class _R:
+        status_code = status
+        headers = {"content-type": "application/json"}
+        @staticmethod
+        def json():
+            return payload or {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        sent["url"], sent["headers"], sent["json"] = url, headers, json
+        return _R()
+
+    monkeypatch.setattr(emailer.requests, "post", fake_post)
+    return sent
+
+
+def test_resend_success_takes_priority(monkeypatch):
+    _setup_brevo(monkeypatch)  # les deux configurés : resend gagne
+    sent = _setup_resend(monkeypatch)  # son fake post est appliqué en dernier
+    ok, detail = emailer.send_email_html("a@b.c", "Sujet", "<p>hi</p>")
+    assert ok is True and detail == "sent(resend)"
+    assert sent["url"].endswith("/emails")
+    assert sent["headers"]["Authorization"] == "Bearer re_test"
+    assert sent["json"]["to"] == ["a@b.c"]
+
+
+def test_resend_error_detail(monkeypatch):
+    _setup_resend(monkeypatch, status=403,
+                  payload={"message": "You can only send to your own email"})
+    ok, detail = emailer.send_email_html("a@b.c", "Sujet", "<p>x</p>")
+    assert ok is False and "resend_403" in detail and "own email" in detail
+
+
+def test_resend_plain_text_variant(monkeypatch):
+    sent = _setup_resend(monkeypatch)
+    ok, _ = emailer.send_email("a@b.c", "Sujet", "corps texte")
+    assert ok is True
+    assert sent["json"]["text"] == "corps texte"

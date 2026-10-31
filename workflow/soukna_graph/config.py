@@ -60,6 +60,12 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM", "soukna@noreply.ma")
+# Brevo (API HTTPS) : prioritaire en production — les hébergeurs cloud
+# bloquent le SMTP sortant, jamais HTTPS. Vide = SMTP classique (local).
+BREVO_API_KEY = os.getenv("BREVO_API_KEY", "")
+# Resend (API HTTPS, alternative à Brevo) — prioritaire si défini.
+# Sans domaine vérifié, Resend n'envoie qu'à l'email du compte.
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
 
 
 def email_ready() -> bool:
