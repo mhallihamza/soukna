@@ -273,6 +273,62 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
         return _parse_rows(r1.text)
 
 
+
+def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
+                    date_start: str | None = None, date_end: str | None = None,
+                    max_pages: int = 40) -> list[dict[str, Any]]:
+    """Recherche avancée OFFICIELLE avec pagination complète.
+
+    Critères vérifiés en live (audit 2026-11-01, cf. docs/AUDIT-…md) :
+    keywordSearch, annonceType, dateMiseEnLigne start/end. La clé de la
+    pagination : poster à CHAQUE page un PRADO_PAGESTATE frais de la page
+    de résultats précédente, avec la cible du bouton « suivant ».
+    Politesse : ~1 s entre pages.
+    """
+    import time as _time
+
+    s = requests.Session()
+    s.headers.update(UA)
+    r0 = s.get(SEARCH_PAGE, params=SEARCH_PARAMS, timeout=config.PORTAL_TIMEOUT_S)
+    fields = _parse_form(r0.text)
+    if keyword:
+        fields["ctl0$CONTENU_PAGE$AdvancedSearch$keywordSearch"] = keyword
+    if annonce_type:
+        fields["ctl0$CONTENU_PAGE$AdvancedSearch$annonceType"] = str(annonce_type)
+    if date_start:
+        fields["ctl0$CONTENU_PAGE$AdvancedSearch$dateMiseEnLigneCalculeStart"] = date_start
+    if date_end:
+        fields["ctl0$CONTENU_PAGE$AdvancedSearch$dateMiseEnLigneCalculeEnd"] = date_end
+    submit = "ctl0$CONTENU_PAGE$AdvancedSearch$lancerRecherche"
+    fields[submit] = "Lancer la recherche"
+    fields["PRADO_POSTBACK_TARGET"] = submit
+
+    collected: dict[str, dict[str, Any]] = {}
+    html = ""
+    for page in range(1, max_pages + 1):
+        r = s.post(SEARCH_PAGE, params=SEARCH_PARAMS, data=fields,
+                   timeout=config.PORTAL_TIMEOUT_S)
+        html = r.text
+        items = _parse_rows(html)
+        if not items:
+            break
+        new = 0
+        for it in items:
+            if str(it.get("source_ref")) not in collected:
+                collected[str(it.get("source_ref"))] = it
+                new += 1
+        # pager suivant actif ? (sinon dernière page atteinte)
+        m = re.search(
+            r'id="(ctl0_CONTENU_PAGE_resultSearch_PagerBottom_ctl\d+)"'
+            r'[^>]*>\s*<img[^>]*fleche-suivant', html)
+        if not m or new == 0:
+            break
+        fields = _parse_form(html)          # PAGESTATE frais de cette page
+        fields["PRADO_POSTBACK_TARGET"] = m.group(1).replace("_", "$")
+        _time.sleep(1.0)                    # politesse portail
+    return list(collected.values())
+
+
 def fetch_consultations(max_items: int = 200, per_term: int = 10) -> list[dict[str, Any]]:
     """Agrège les consultations par secteur (1 recherche rapide chacun).
 
