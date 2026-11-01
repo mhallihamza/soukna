@@ -185,3 +185,19 @@ def test_matches_for_company_no_filters(monkeypatch):
         {"sql": sql, "params": params}) or []))
     db.matches_for_company("c1")
     assert "opportunity_type = %s" not in captured["sql"]
+
+
+def test_sources_upsert_accepts_enabled_kwarg(monkeypatch):
+    """Régression : le POST admin envoie `enabled` — sources_upsert doit
+    l'accepter (TypeError silencieux => 500 sur le POST, cf. prod)."""
+    captured: dict = {}
+    monkeypatch.setattr(db, "query", lambda sql, params=(): (captured.update(
+        {"sql": sql, "params": params}) or [{"id": "s9"}]))
+    row = db.sources_upsert(name="X", base_url="https://x/rss", kind="rss",
+                            adapter="generic_rss", cadence_hours=12, enabled=True)
+    assert row["id"] == "s9"
+    assert "enabled" in captured["sql"] and "COALESCE" in captured["sql"]
+    # update : enabled partiel passe aussi
+    row = db.sources_upsert(name="X2", base_url="https://x2", source_id="s9",
+                            enabled=False)
+    assert captured["params"][-1] == "s9"

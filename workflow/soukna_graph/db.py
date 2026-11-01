@@ -870,18 +870,20 @@ def sources_list(*, enabled_only: bool = False) -> list[dict[str, Any]]:
 
 def sources_upsert(*, name: str, base_url: str, kind: str = "portal_html",
                    adapter: str = "marchespublics", cadence_hours: int = 24,
+                   enabled: bool | None = None,
                    source_id: str | None = None) -> dict[str, Any]:
     """Crée ou met à jour une source. Retourne la ligne écrite."""
     if source_id:
         rows = query(
             """UPDATE sources SET name = %s, base_url = %s, kind = %s,
-               adapter = %s, cadence_hours = %s WHERE id = %s RETURNING *""",
-            (name, base_url, kind, adapter, cadence_hours, source_id))
+               adapter = %s, cadence_hours = %s,
+               enabled = COALESCE(%s, enabled) WHERE id = %s RETURNING *""",
+            (name, base_url, kind, adapter, cadence_hours, enabled, source_id))
     else:
         rows = query(
-            """INSERT INTO sources (name, base_url, kind, adapter, cadence_hours)
-               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
-            (name, base_url, kind, adapter, cadence_hours))
+            """INSERT INTO sources (name, base_url, kind, adapter, cadence_hours, enabled)
+               VALUES (%s, %s, %s, %s, %s, COALESCE(%s, TRUE)) RETURNING *""",
+            (name, base_url, kind, adapter, cadence_hours, enabled))
     return rows[0]
 
 

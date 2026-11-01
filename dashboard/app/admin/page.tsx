@@ -1090,8 +1090,8 @@ export default function AdminPage() {
 
       {showSrcForm && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-line bg-white">
-          <input className="input" placeholder={t("srcName")} value={sName} onChange={e => setSName(e.target.value)} />
-          <input className="input" placeholder={t("srcUrl")} value={sUrl} onChange={e => setSUrl(e.target.value)} />
+          <input className="input" required placeholder={t("srcName")} value={sName} onChange={e => setSName(e.target.value)} />
+          <input className="input" required type="url" placeholder={t("srcUrl")} value={sUrl} onChange={e => setSUrl(e.target.value)} />
           <select className="input" value={sKind} onChange={e => setSKind(e.target.value)}>
             <option value="portal_html">portal_html</option>
             <option value="rss">rss</option>
@@ -1104,7 +1104,7 @@ export default function AdminPage() {
           <input className="input" type="number" min={1} placeholder={t("srcCadence")}
                  value={sCadence} onChange={e => setSCadence(Number(e.target.value) || 24)} />
           <div className="flex gap-2 items-end">
-            <button className="btn-primary px-4 py-2 text-sm" disabled={busy} onClick={saveSource}>{t("saveSrcBtn")}</button>
+            <button className="btn-primary px-4 py-2 text-sm" disabled={busy || !sName.trim() || !sUrl.trim()} onClick={saveSource}>{t("saveSrcBtn")}</button>
             <button className="px-4 py-2 text-sm text-muted" onClick={resetSrcForm}>{t("cancelBtn")}</button>
           </div>
         </div>
