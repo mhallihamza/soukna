@@ -127,3 +127,32 @@ bruts=120, uniques=84, durée 74 s. La pagination est fiable.
   du filtre** en comparant les refs avec la liste non filtrée avant de
   classifier en AWARDED. Étape suivante immédiate.
 - Ne PAS marquer AWARDED/CANCELLED sans preuve de filtrage effectif.
+
+## 10. Phase 1 (redesign sans mots-clés) — capacités vérifiées live
+
+| Capacité testée | Verdict (preuves) |
+|---|---|
+| Recherche avancée AVEC mot-clé + pagination | ✅ fiable (12 pages, 84 uniques gardiennage, 0 répétition) |
+| Fenêtres de dates SANS mot-clé | ❌ **NON appliquées** : deux fenêtres disjointes (20-26/10 vs 13-19/10) renvoient les MÊMES 5 items. `dateMiseEnLigneCalcule*` = champs « calculés » (probablement lecture seule / panneau masqué). |
+| Sections annonceType (2/4/5/6/8/9) | ⚠️ accessibles + pagination OK (20 items/2 pages sur type=4) — **application du filtre à vérifier** par comparaison de refs avant classification. |
+| categorie | Travaux(1)/Fournitures(2)/Services(3) — **pas de BC dédié**. |
+| Bons de commande | Section non localisée (1 740 observés par l'utilisateur) — à retrouver (nav du portail / autre route). |
+| Balayage non filtré | 239 785 annonces, tri par fin d'affichage (PV lointaines d'abord) — marche bornée possible mais tri défavorable. |
+
+## 11. Architecture retenue (proposée)
+
+- **PRIMAIRE (sans mots-clés)** : collecteurs par section `annonceType`
+  (information, résultats, PV, achèvement, résiliation) avec pagination
+  fiable → couverture du cycle de vie complet. Vérifier l'application
+  effective de chaque filtre (comparaison de refs) avant classification.
+- **Consultations en cours** : marche bornée de la liste non filtrée
+  (fenêtre de pages) — le tri du portail est défavorable mais couvre.
+- **SECONDAIRE (conservé)** : les 30 mots-clés quick search (découverte).
+- **Datation incrémentale** : bloquée tant que le filtre de dates n'est
+  pas craqué (piste : panneau « plus de critères » masqué à explorer via
+  postback du toggle, ou sélecteur de période réel à localiser).
+- **BC** : localiser la section réelle (1 740 observés) avant collecteur.
+- **Statuts** : ACTIVE (vivant) / EXPIRED (délai passé, preuve = date) /
+  AWARDED (vu dans annonceType=4) / CANCELLED (vu dans annonceType=8) /
+  UNKNOWN — jamais par inférence du seul délai.
+- Matching par entreprise APRÈS collecte centrale (une base commune).
