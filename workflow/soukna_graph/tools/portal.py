@@ -41,23 +41,44 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; SouknaBot/1.0; +https://soukna.ma)
 # Validé live pour les 5 premiers (informatique=232, travaux=2310,
 # fourniture=437, maintenance=250, étude=506). Un terme en échec
 # n'empêche pas les autres (résilience par terme).
+# 30 termes : le portail ne renvoie que les 10 plus proches échéances
+# PAR recherche — chaque terme supplémentaire élargit l'union couverte
+# (synonymes métier par secteur + termes ciblés TPE/PME).
 SEARCH_TERMS: dict[str, str] = {
+    # Informatique & numérique
     "Informatique": "informatique",
+    "Numérique": "numérique",
+    "Logiciel": "logiciel",
+    "Cybersécurité": "cybersécurité",
+    # Travaux & BTP
     "Travaux & BTP": "travaux",
+    "Construction": "construction",
+    "Réhabilitation": "réhabilitation",
+    # Fournitures
     "Fournitures": "fourniture",
-    "Maintenance": "maintenance",
-    "Études & conseil": "étude",
     "Mobilier": "mobilier",
-    "Formation": "formation",
-    "Gardiennage": "gardiennage",
-    "Nettoyage": "nettoyage",
-    "Transport": "transport",
+    "Équipements": "équipement",
+    # Services techniques
+    "Maintenance": "maintenance",
     "Énergie": "électricité",
     "Eau & assainissement": "assainissement",
-    "Santé & médical": "médical",
-    "Impression": "imprimerie",
     "Télécoms": "télécom",
+    # Services support (cœur PME/TPE)
+    "Nettoyage": "nettoyage",
+    "Gardiennage": "gardiennage",
+    "Transport": "transport",
+    "Impression": "imprimerie",
+    "Formation": "formation",
+    "Études & conseil": "étude",
+    "Audit": "audit",
+    "Architecture": "architecture",
+    "Traduction": "traduction",
+    "Photographie": "photographie",
+    "Catering & traiteur": "traiteur",
+    "Agroalimentaire": "alimentaire",
+    "Santé & médical": "médical",
     "Environnement": "déchets",
+    "Communication": "communication",
     # Cible TPE/PME : les bons de commande (petits montants, procédure simple)
     "Bons de commande": "bons de commande",
 }
@@ -252,7 +273,7 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
         return _parse_rows(r1.text)
 
 
-def fetch_consultations(max_items: int = 120, per_term: int = 15) -> list[dict[str, Any]]:
+def fetch_consultations(max_items: int = 200, per_term: int = 10) -> list[dict[str, Any]]:
     """Agrège les consultations par secteur (1 recherche rapide chacun).
 
     La page de résultats contient jusqu'à ~60 lignes : lire 15 par terme
