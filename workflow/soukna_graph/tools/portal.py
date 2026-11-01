@@ -36,15 +36,30 @@ QUICK_SEARCH_FIELD = "ctl0$menuGaucheEntreprise$quickSearch"
 QUICK_SEARCH_BUTTON = "ctl0$menuGaucheEntreprise$imageOk"
 UA = {"User-Agent": "Mozilla/5.0 (compatible; SouknaBot/1.0; +https://soukna.ma)"}
 
-# Secteur Soukna → terme de recherche rapide représentatif (validé live :
-# informatique=232, travaux=2310, fourniture=437, maintenance=250,
-# étude=506 résultats, échéances réelles de novembre/décembre 2026).
+# Couverture ÉTENDUE : un terme de recherche rapide par secteur du
+# référentiel (18) + un terme dédié aux bons de commande (cible PME/TPE).
+# Validé live pour les 5 premiers (informatique=232, travaux=2310,
+# fourniture=437, maintenance=250, étude=506). Un terme en échec
+# n'empêche pas les autres (résilience par terme).
 SEARCH_TERMS: dict[str, str] = {
     "Informatique": "informatique",
-    "BTP": "travaux",
+    "Travaux & BTP": "travaux",
     "Fournitures": "fourniture",
-    "Services et maintenance": "maintenance",
-    "Conseil et études": "étude",
+    "Maintenance": "maintenance",
+    "Études & conseil": "étude",
+    "Mobilier": "mobilier",
+    "Formation": "formation",
+    "Gardiennage": "gardiennage",
+    "Nettoyage": "nettoyage",
+    "Transport": "transport",
+    "Énergie": "électricité",
+    "Eau & assainissement": "assainissement",
+    "Santé & médical": "médical",
+    "Impression": "imprimerie",
+    "Télécoms": "télécom",
+    "Environnement": "déchets",
+    # Cible TPE/PME : les bons de commande (petits montants, procédure simple)
+    "Bons de commande": "bons de commande",
 }
 
 MONTHS_FR = {
@@ -237,7 +252,7 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
         return _parse_rows(r1.text)
 
 
-def fetch_consultations(max_items: int = 30, per_term: int = 10) -> list[dict[str, Any]]:
+def fetch_consultations(max_items: int = 45, per_term: int = 6) -> list[dict[str, Any]]:
     """Agrège les consultations par secteur (1 recherche rapide chacun).
 
     Résilient : un terme en échec n'empêche pas les autres ; une exception
