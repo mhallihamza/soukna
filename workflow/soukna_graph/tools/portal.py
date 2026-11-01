@@ -274,21 +274,29 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
 
 
 
+
 def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
                     date_start: str | None = None, date_end: str | None = None,
-                    max_pages: int = 40) -> list[dict[str, Any]]:
-    """Recherche avancée OFFICIELLE avec pagination complète.
+                    max_pages: int = 40, max_repeats: int = 3,
+                    pagestate_provider: Any = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Recherche avancée OFFICIELLE avec pagination robuste.
 
-    Critères vérifiés en live (audit 2026-11-01, cf. docs/AUDIT-…md) :
-    keywordSearch, annonceType, dateMiseEnLigne start/end. La clé de la
-    pagination : poster à CHAQUE page un PRADO_PAGESTATE frais de la page
-    de résultats précédente, avec la cible du bouton « suivant ».
-    Politesse : ~1 s entre pages.
+    Retourne (items_uniques, stats). La pagination PRADO est parfois
+    non déterministe (page 1 re-servie) : chaque page répétée est
+    recomptée et re-tentée (jamais acceptée en silence) ; après
+    max_repeats répétitions, la marche s'arrête honnêtement.
+
+    pagestate_provider : callback optionnel (html, fields) -> fields pour
+    persister/récupérer l'état entre runs (réservé phase 3).
     """
     import time as _time
 
     s = requests.Session()
     s.headers.update(UA)
+    stats: dict[str, Any] = {
+        "pages": 0, "pages_repeated": 0, "retries": 0, "re_searches": 0,
+        "raw_items": 0, "empty_pages": 0, "last_page_items": 0,
+    }
     r0 = s.get(SEARCH_PAGE, params=SEARCH_PARAMS, timeout=config.PORTAL_TIMEOUT_S)
     fields = _parse_form(r0.text)
     if keyword:
@@ -304,30 +312,43 @@ def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
     fields["PRADO_POSTBACK_TARGET"] = submit
 
     collected: dict[str, dict[str, Any]] = {}
-    html = ""
-    for page in range(1, max_pages + 1):
+    repeats = 0
+    while stats["pages"] < max_pages:
         r = s.post(SEARCH_PAGE, params=SEARCH_PARAMS, data=fields,
                    timeout=config.PORTAL_TIMEOUT_S)
         html = r.text
+        stats["pages"] += 1
         items = _parse_rows(html)
+        stats["raw_items"] += len(items)
+        stats["last_page_items"] = len(items)
         if not items:
+            stats["empty_pages"] += 1
             break
-        new = 0
+        new = [i for i in items if str(i.get("source_ref")) not in collected]
         for it in items:
-            if str(it.get("source_ref")) not in collected:
-                collected[str(it.get("source_ref"))] = it
-                new += 1
-        # pager suivant actif ? (sinon dernière page atteinte)
+            collected[str(it.get("source_ref"))] = it
+        if new:
+            repeats = 0                     # progression saine
+        else:
+            repeats += 1
+            stats["pages_repeated"] += 1
+            if repeats >= max_repeats:
+                break                       # arrêt honnête, pas de silence
+            stats["retries"] += 1
+            _time.sleep(2.0)                # re-tenter la même cible
+            continue
         m = re.search(
             r'id="(ctl0_CONTENU_PAGE_resultSearch_PagerBottom_ctl\d+)"'
             r'[^>]*>\s*<img[^>]*fleche-suivant', html)
-        if not m or new == 0:
-            break
-        fields = _parse_form(html)          # PAGESTATE frais de cette page
+        if not m:
+            break                           # dernière page : pager suivant inactif
+        fields = _parse_form(html)          # PAGESTATE frais de CETTE page
         fields["PRADO_POSTBACK_TARGET"] = m.group(1).replace("_", "$")
+        # PRADO exige le paramètre de commande : sans lui le pager
+        # ré-serve la page 1 (bug corrigé, audit 2026-11-01)
+        fields["PRADO_POSTBACK_PARAMETER"] = "next"
         _time.sleep(1.0)                    # politesse portail
-    return list(collected.values())
-
+    return list(collected.values()), stats
 
 def fetch_consultations(max_items: int = 200, per_term: int = 10) -> list[dict[str, Any]]:
     """Agrège les consultations par secteur (1 recherche rapide chacun).
