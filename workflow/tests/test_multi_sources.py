@@ -56,6 +56,8 @@ def test_normalize_item_adds_ref_and_type():
 def test_generic_rss_parses_fixture(monkeypatch):
     class _R:
         text = RSS_FIXTURE
+        status_code = 200
+        headers = {"content-type": "application/rss+xml"}
         def raise_for_status(self): pass
     monkeypatch.setattr(generic_rss.requests, "get", lambda *a, **k: _R())
     items = generic_rss.fetch({"name": "Portail Régional", "base_url": "https://exemple.ma/rss"})
@@ -69,6 +71,8 @@ def test_generic_rss_parses_fixture(monkeypatch):
 def test_generic_rss_empty_feed_raises(monkeypatch):
     class _R:
         text = "<?xml version=\"1.0\"?><rss version=\"2.0\"><channel/></rss>"
+        status_code = 200
+        headers = {"content-type": "application/rss+xml"}
         def raise_for_status(self): pass
     monkeypatch.setattr(generic_rss.requests, "get", lambda *a, **k: _R())
     with pytest.raises(RuntimeError):

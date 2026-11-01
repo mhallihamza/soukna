@@ -104,7 +104,19 @@ def fetch(source: dict) -> list[dict]:
     if not url:
         raise RuntimeError("rss : base_url vide")
     r = requests.get(url, headers=UA, timeout=30)
+    if r.status_code == 403:
+        raise RuntimeError(
+            "403 : le site refuse les requêtes automatiques (protection "
+            "anti-bot / WAF avec challenge JavaScript) — incompatible avec "
+            "l'adaptateur RSS générique ; il faut un adaptateur navigateur "
+            "sans tête (phase 2) ou une autre source")
+    if r.status_code == 404:
+        raise RuntimeError("404 : URL introuvable — vérifier le lien du flux")
     r.raise_for_status()
+    if "html" in r.headers.get("content-type", "").lower():
+        raise RuntimeError(
+            "la réponse est une page HTML, pas un flux RSS/Atom — mettre "
+            "l'URL du flux (…/rss, …/feed) ou créer un adaptateur dédié")
     name = source.get("name") or "rss"
     items = _parse_feed(r.text, name, url)
     if not items:
