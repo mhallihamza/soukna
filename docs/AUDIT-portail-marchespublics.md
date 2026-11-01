@@ -112,3 +112,18 @@ reconstruire `ctl0$CONTENU_PAGE$resultSearch$PagerBottom$ctlN`.
 
 **PREUVES (gardiennage, max_pages=12)** : pages=12, répétées=0,
 bruts=120, uniques=84, durée 74 s. La pagination est fiable.
+
+## 9. Audit des sections (annonceType / categorie) — en cours
+
+- `annonceType` : 0=tous · 2=information (programmes prévisionnels) ·
+  **4=résultat définitif (AWARDED)** · 5=extrait PV · 6=rapport achèvement ·
+  **8=décision de résiliation (CANCELLED)** · 9=rapport présentation.
+- `procedureType` : 20 procédures (AO ouvert=1, restreint=2, simplifié=50…).
+- `categorie` : 1=Travaux · 2=Fournitures · 3=Services — **pas de BC
+  dédié** : les bons de commande passent par procedureType/categorie à
+  identifier encore (ou listés comme consultations ordinaires).
+- Walker paginé validé sur annonceType=4 (20 items/2 pages) MAIS les
+  titres ressemblent aux AO ordinaires → **vérifier l'application réelle
+  du filtre** en comparant les refs avec la liste non filtrée avant de
+  classifier en AWARDED. Étape suivante immédiate.
+- Ne PAS marquer AWARDED/CANCELLED sans preuve de filtrage effectif.
