@@ -14,14 +14,27 @@ from typing import Any
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+from starlette.requests import Request
 
 from soukna_graph import config, db, monitoring
 from soukna_graph.graph import build_graph
 from soukna_graph.tools import emailer, seed_data, whatsapp
 
 app = FastAPI(title="Soukna Workflow API", version="1.1.0")
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    """500 JSON avec en-têtes CORS (ExceptionMiddleware est DANS le
+    middleware CORS) : le navigateur voit la vraie erreur au lieu d'un
+    blocage CORS trompeur quand une requête crash."""
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"erreur serveur : {type(exc).__name__}: {str(exc)[:200]}"},
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.CORS_ORIGINS,

@@ -24,7 +24,7 @@ def connect() -> psycopg.Connection:
     global _pool
     if _pool is None:
         _pool = ConnectionPool(
-            config.DATABASE_URL, min_size=1, max_size=5,
+            config.DATABASE_URL, min_size=2, max_size=10,
             open=True,
             kwargs={"autocommit": True, "prepare_threshold": None, "row_factory": dict_row},
         )
