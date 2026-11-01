@@ -157,6 +157,33 @@ CREATE TABLE IF NOT EXISTS monitor_state (
     value JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sources (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'portal_html',   -- portal_html | rss | api_json
+    adapter TEXT NOT NULL DEFAULT 'marchespublics',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    cadence_hours INT NOT NULL DEFAULT 24,
+    last_run_at TIMESTAMPTZ,
+    last_status TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sectors (
+    code TEXT PRIMARY KEY,
+    label_fr TEXT NOT NULL,
+    label_ar TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'services',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    phone TEXT NOT NULL,
+    role TEXT NOT NULL,                          -- user | assistant
+    content TEXT NOT NULL,
+    intent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
@@ -230,6 +257,50 @@ CREATE TABLE IF NOT EXISTS monitor_state (
     value JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sources (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'portal_html',
+    adapter TEXT NOT NULL DEFAULT 'marchespublics',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    cadence_hours INT NOT NULL DEFAULT 24,
+    last_run_at TIMESTAMPTZ,
+    last_status TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sectors (
+    code TEXT PRIMARY KEY,
+    label_fr TEXT NOT NULL,
+    label_ar TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'services',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    phone TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    intent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_phone ON chat_messages(phone, created_at DESC);
+
+-- Profil entreprise étendu (tous optionnels, utilisés par le matching LLM)
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS budget_min NUMERIC(14, 2);
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS budget_max NUMERIC(14, 2);
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS certifications TEXT[] DEFAULT '{}';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS qualification TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS experience_years INT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS references_projets JSONB DEFAULT '[]';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS ice TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS rc TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS if_fiscal TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS prefers_types TEXT[] DEFAULT '{}';
+-- Typologie des opportunités (AO ouvert/restreint, bon de commande, ...)
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opportunity_type TEXT;
 """
 
 # Le formulaire de la landing écrit dans waitlist via la clé publishable
@@ -348,20 +419,23 @@ def upsert_opportunity(**o: Any) -> bool:
     rows = query(
         """
         INSERT INTO opportunities (source_ref, source, title, buyer, city, region,
-                                   sector, domain_code, deadline, amount, url, raw)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                   sector, domain_code, deadline, amount, url, raw,
+                                   opportunity_type)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (source_ref) DO UPDATE SET
             title = EXCLUDED.title, buyer = EXCLUDED.buyer, city = EXCLUDED.city,
             region = EXCLUDED.region, sector = EXCLUDED.sector,
             domain_code = EXCLUDED.domain_code, deadline = EXCLUDED.deadline,
             amount = EXCLUDED.amount, url = EXCLUDED.url, raw = EXCLUDED.raw,
+            opportunity_type = EXCLUDED.opportunity_type,
             updated_at = now()
         RETURNING (xmax = 0) AS inserted
         """,
         (o["source_ref"], o.get("source", "seed"), o["title"], o.get("buyer"),
          o.get("city"), o.get("region"), o.get("sector"), o.get("domain_code"),
          o.get("deadline"), o.get("amount"), o.get("url"),
-         json.dumps(o.get("raw") or {}, ensure_ascii=False)),
+         json.dumps(o.get("raw") or {}, ensure_ascii=False),
+         o.get("opportunity_type")),
     )
     return bool(rows and rows[0]["inserted"])
 
@@ -427,18 +501,29 @@ def upsert_match(*, opportunity_id: str, company_id: str, match_score: int,
     return bool(rows and rows[0]["inserted"])
 
 
-def matches_for_company(company_id: str, *, min_score: int = 0, limit: int = 30) -> list[dict[str, Any]]:
-    return query(
-        """
+def matches_for_company(company_id: str, *, min_score: int = 0, limit: int = 30,
+                        opp_type: str | None = None, sector: str | None = None,
+                        city: str | None = None) -> list[dict[str, Any]]:
+    """Matches de l'entreprise, avec filtres optionnels :
+    type d'opportunité (appel_offres/bon_commande/consultation), secteur, ville."""
+    sql = """
         SELECT m.*, o.title, o.buyer, o.city, o.region, o.sector, o.deadline,
-               o.amount, o.source_ref, o.url, o.source
+               o.amount, o.source_ref, o.url, o.source, o.opportunity_type
         FROM matches m JOIN opportunities o ON o.id = m.opportunity_id
-        WHERE m.company_id = %s AND m.match_score >= %s
-        ORDER BY m.match_score DESC, o.deadline
-        LIMIT %s
-        """,
-        (company_id, min_score, limit),
-    )
+        WHERE m.company_id = %s AND m.match_score >= %s"""
+    params: list[Any] = [company_id, min_score]
+    if opp_type:
+        sql += " AND o.opportunity_type = %s"
+        params.append(opp_type)
+    if sector:
+        sql += " AND (o.sector = %s OR o.sector ILIKE %s)"
+        params.extend([sector, f"%{sector}%"])
+    if city:
+        sql += " AND o.city ILIKE %s"
+        params.append(f"%{city}%")
+    sql += " ORDER BY m.match_score DESC, o.deadline LIMIT %s"
+    params.append(limit)
+    return query(sql, tuple(params))
 
 
 def update_match(match_id: str, company_id: str, *, saved: bool | None = None,
@@ -770,6 +855,116 @@ def waitlist_counts() -> dict[str, int]:
     for r in rows:
         counts[r["status"]] = r["n"]
     return counts
+
+
+# -----------------------------------------------------------------------
+# Sources multiples (registre piloté depuis la console admin)
+# -----------------------------------------------------------------------
+
+def sources_list(*, enabled_only: bool = False) -> list[dict[str, Any]]:
+    sql = "SELECT * FROM sources"
+    if enabled_only:
+        sql += " WHERE enabled = TRUE"
+    return query(sql + " ORDER BY created_at")
+
+
+def sources_upsert(*, name: str, base_url: str, kind: str = "portal_html",
+                   adapter: str = "marchespublics", cadence_hours: int = 24,
+                   source_id: str | None = None) -> dict[str, Any]:
+    """Crée ou met à jour une source. Retourne la ligne écrite."""
+    if source_id:
+        rows = query(
+            """UPDATE sources SET name = %s, base_url = %s, kind = %s,
+               adapter = %s, cadence_hours = %s WHERE id = %s RETURNING *""",
+            (name, base_url, kind, adapter, cadence_hours, source_id))
+    else:
+        rows = query(
+            """INSERT INTO sources (name, base_url, kind, adapter, cadence_hours)
+               VALUES (%s, %s, %s, %s, %s) RETURNING *""",
+            (name, base_url, kind, adapter, cadence_hours))
+    return rows[0]
+
+
+def sources_set_enabled(source_id: str, enabled: bool) -> None:
+    execute("UPDATE sources SET enabled = %s WHERE id = %s", (enabled, source_id))
+
+
+def sources_delete(source_id: str) -> int:
+    return execute("DELETE FROM sources WHERE id = %s", (source_id,))
+
+
+def sources_update_status(source_id: str, status: str) -> None:
+    execute("UPDATE sources SET last_status = %s, last_run_at = now() WHERE id = %s",
+            (status[:200], source_id))
+
+
+# -----------------------------------------------------------------------
+# Secteurs (référentiel FR/AR, seed au démarrage)
+# -----------------------------------------------------------------------
+
+def sectors_ensure(rows: list[dict[str, str]]) -> int:
+    n = 0
+    for r in rows:
+        n += execute(
+            """INSERT INTO sectors (code, label_fr, label_ar, category)
+               VALUES (%s, %s, %s, %s)
+               ON CONFLICT (code) DO UPDATE SET label_fr = EXCLUDED.label_fr,
+               label_ar = EXCLUDED.label_ar, category = EXCLUDED.category""",
+            (r["code"], r["label_fr"], r["label_ar"], r.get("category", "services")))
+    return n
+
+
+def sectors_list() -> list[dict[str, Any]]:
+    return query("SELECT * FROM sectors WHERE enabled = TRUE ORDER BY category, label_fr")
+
+
+# -----------------------------------------------------------------------
+# Mémoire de conversation persistée (contexte multi-messages WhatsApp)
+# -----------------------------------------------------------------------
+
+def chat_save(phone: str, role: str, content: str, intent: str | None = None) -> None:
+    execute(
+        "INSERT INTO chat_messages (phone, role, content, intent) VALUES (%s, %s, %s, %s)",
+        (phone or "", role, (content or "")[:2000], intent))
+
+
+def chat_history(phone: str, limit: int = 8) -> list[dict[str, Any]]:
+    """Derniers messages (ancien → récent) pour injecter le contexte."""
+    rows = query(
+        """SELECT role, content, created_at FROM chat_messages
+           WHERE phone = %s ORDER BY created_at DESC LIMIT %s""",
+        (phone or "", limit))
+    return list(reversed(rows))
+
+
+# -----------------------------------------------------------------------
+# Profil entreprise étendu (champs optionnels — matching enrichi)
+# -----------------------------------------------------------------------
+
+PROFILE_EXT_FIELDS = {
+    "budget_min", "budget_max", "certifications", "qualification",
+    "experience_years", "references_projets", "ice", "rc", "if_fiscal",
+    "website", "linkedin", "prefers_types",
+}
+
+
+def update_company_profile_ext(company_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+    """Met à jour uniquement les champs étendus fournis (None ignorés)."""
+    cols: list[str] = []
+    params: list[Any] = []
+    for key, value in (fields or {}).items():
+        if key not in PROFILE_EXT_FIELDS or value is None:
+            continue
+        cols.append(f"{key} = %s")
+        params.append(json.dumps(value, ensure_ascii=False)
+                      if key == "references_projets" else value)
+    if not cols:
+        return get_company(company_id)
+    params.append(company_id)
+    rows = query(
+        f"UPDATE companies SET {', '.join(cols)} WHERE id = %s RETURNING *",
+        tuple(params))
+    return rows[0] if rows else None
 
 
 def waitlist_row(wid: str) -> dict[str, Any] | None:

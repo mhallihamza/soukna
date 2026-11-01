@@ -127,6 +127,14 @@ def _score_batch(llm: Any, company: dict[str, Any],
         "mots_cles": company.get("keywords"),
         "regions": company.get("regions"),
         "taille": company.get("size"),
+        # Profil étendu (optionnel — précision du score : budget vs montant,
+        # certifications exigées, qualification/classement, types préférés)
+        "budget_min": str(company.get("budget_min") or "") or None,
+        "budget_max": str(company.get("budget_max") or "") or None,
+        "certifications": company.get("certifications") or [],
+        "qualification": company.get("qualification") or "",
+        "experience_annees": company.get("experience_years"),
+        "types_preferes": company.get("prefers_types") or [],
     }, ensure_ascii=False)
     opps_json = json.dumps([{
         "source_ref": o.get("source_ref"),

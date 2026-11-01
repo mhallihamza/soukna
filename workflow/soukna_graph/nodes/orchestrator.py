@@ -61,6 +61,11 @@ def orchestrator_node(state: AgentState) -> dict[str, Any]:
 
     llm, _mode = make_llm()
     prompt = ORCHESTRATOR_SYSTEM + today_hint() + f"\n\nMESSAGE : {message!r}"
+    history = state.get("history") or []
+    if history:
+        convo = "\n".join(f"- {h['role']}: {str(h['content'])[:160]}"
+                          for h in history[-6:])
+        prompt += f"\n\nHISTORIQUE RÉCENT (le plus récent en dernier) :\n{convo}"
     parsed, _used, usage = call_llm_json(llm, prompt, fallback)
 
     intent = parsed.get("intent")

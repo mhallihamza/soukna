@@ -12,6 +12,30 @@ def _deadline(days: int) -> str:
     return (date.today() + timedelta(days=days)).isoformat()
 
 
+# Référentiel secteurs — couverture réaliste des achats publics marocains.
+# Seed au démarrage (db.sectors_ensure) ; utilisé par l'onboarding, la
+# console, le matching et le mapping des domain_code des portails.
+SECTORS: list[dict[str, str]] = [
+    {"code": "informatique", "label_fr": "Informatique & numérique", "label_ar": "المعلوميات والرقمنة", "category": "services"},
+    {"code": "travaux", "label_fr": "Travaux & BTP", "label_ar": "الأشغال والبناء", "category": "travaux"},
+    {"code": "fournitures", "label_fr": "Fournitures & équipements", "label_ar": "التوريدات والتجهيزات", "category": "fournitures"},
+    {"code": "mobilier", "label_fr": "Mobilier & aménagement", "label_ar": "الأثاث والتجهيز", "category": "fournitures"},
+    {"code": "maintenance", "label_fr": "Maintenance & entretien", "label_ar": "الصيانة", "category": "services"},
+    {"code": "etudes", "label_fr": "Études & conseil", "label_ar": "الدراسات والاستشارة", "category": "services"},
+    {"code": "formation", "label_fr": "Formation", "label_ar": "التكوين", "category": "services"},
+    {"code": "gardiennage", "label_fr": "Gardiennage & sécurité privée", "label_ar": "الحراسة والأمن الخاص", "category": "services"},
+    {"code": "nettoyage", "label_fr": "Nettoyage & propreté", "label_ar": "النظافة", "category": "services"},
+    {"code": "transport", "label_fr": "Transport & logistique", "label_ar": "النقل واللوجستيك", "category": "services"},
+    {"code": "energie", "label_fr": "Énergie & électricité", "label_ar": "الطاقة والكهرباء", "category": "technique"},
+    {"code": "eau", "label_fr": "Eau & assainissement", "label_ar": "الماء والصرف الصحي", "category": "technique"},
+    {"code": "sante", "label_fr": "Santé & équipements médicaux", "label_ar": "الصحة والتجهيزات الطبية", "category": "fournitures"},
+    {"code": "agroalimentaire", "label_fr": "Agroalimentaire", "label_ar": "الصناعة الغذائية", "category": "fournitures"},
+    {"code": "impression", "label_fr": "Impression & communication", "label_ar": "الطباعة والتواصل", "category": "services"},
+    {"code": "telecom", "label_fr": "Télécoms", "label_ar": "الاتصالات", "category": "technique"},
+    {"code": "hydrocarbures", "label_fr": "Hydrocarbures & chimie", "label_ar": "المحروقات والكيمياء", "category": "fournitures"},
+    {"code": "environnement", "label_fr": "Environnement & déchets", "label_ar": "البيئة والنفايات", "category": "services"},
+]
+
 SEED_OPPORTUNITIES: list[dict[str, Any]] = [
     {
         "source_ref": "SO-DEM-001",

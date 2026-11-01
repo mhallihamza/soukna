@@ -37,25 +37,44 @@ def main() -> int:
             return 1
 
     pdfs = sorted((config.KB_DIR).glob("soukna-kb-*.pdf")) if config.KB_DIR.exists() else []
+    # Les bases de connaissances peuvent aussi être rédigées en Markdown
+    # (plus simple à maintenir que des PDF) : même convention de nommage.
+    mds = sorted((config.KB_DIR).glob("soukna-kb-*.md")) if config.KB_DIR.exists() else []
+    docs = [(p, "pdf") for p in pdfs] + [(m, "md") for m in mds]
     if args.lang:
-        pdfs = [p for p in pdfs if p.stem.endswith(f"-{args.lang}")]
-    if not pdfs:
-        print(f"aucun PDF dans {config.KB_DIR}", file=sys.stderr)
+        docs = [(p, kind) for p, kind in docs if p.stem.endswith(f"-{args.lang}")]
+    if not docs:
+        print(f"aucun PDF/MD dans {config.KB_DIR}", file=sys.stderr)
         return 1
 
     total = 0
-    for pdf in pdfs:
-        from pypdf import PdfReader  # import local : le CLI reste utilisable hors ingestion
+    for path, kind in docs:
+        if kind == "pdf":
+            from pypdf import PdfReader  # import local : le CLI reste utilisable hors ingestion
 
-        reader = PdfReader(str(pdf))
-        pages = [page.extract_text() or "" for page in reader.pages]
+            reader = PdfReader(str(path))
+            pages = [page.extract_text() or "" for page in reader.pages]
+        else:
+            # Markdown : une « page » par section ## (plus robuste que le
+            # découpage par taille pour des FAQ rédigées).
+            md = path.read_text(encoding="utf-8")
+            sections: list[str] = []
+            current = ""
+            for line in md.splitlines():
+                if line.startswith("## ") and current.strip():
+                    sections.append(current)
+                    current = ""
+                current += line + chr(10)
+            if current.strip():
+                sections.append(current)
+            pages = sections or [md]
 
-        stem = pdf.stem  # ex. soukna-kb-02-tarifs-fr
+        stem = path.stem  # ex. soukna-kb-01-plateforme-fr
         topic = stem.split("-")[3] if len(stem.split("-")) > 3 else ""
         lang = stem.rsplit("-", 1)[-1]
         chunks = astra_kb.chunk_pages(pages, doc=stem, topic=topic, lang=lang,
-                                      source=f"kb/{pdf.name}")
-        print(f"{pdf.name} : {len(pages)} pages → {len(chunks)} passages")
+                                      source=f"kb/{path.name}")
+        print(f"{path.name} : {len(pages)} sections → {len(chunks)} passages")
         total += len(chunks)
         if not args.dry_run and chunks:
             astra_kb.ensure_collection()

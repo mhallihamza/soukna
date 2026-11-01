@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS opportunities (
     amount TEXT,
     url TEXT,
     raw JSONB DEFAULT '{}',
+    opportunity_type TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -126,6 +127,48 @@ CREATE TABLE IF NOT EXISTS monitor_state (
     value JSONB NOT NULL DEFAULT '{}'::jsonb,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS sources (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    base_url TEXT NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'portal_html',
+    adapter TEXT NOT NULL DEFAULT 'marchespublics',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    cadence_hours INT NOT NULL DEFAULT 24,
+    last_run_at TIMESTAMPTZ,
+    last_status TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS sectors (
+    code TEXT PRIMARY KEY,
+    label_fr TEXT NOT NULL,
+    label_ar TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'services',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE
+);
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    phone TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    intent TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Profil entreprise étendu (tous optionnels — matching enrichi)
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS budget_min NUMERIC(14, 2);
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS budget_max NUMERIC(14, 2);
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS certifications TEXT[] DEFAULT '{}';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS qualification TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS experience_years INT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS references_projets JSONB DEFAULT '[]';
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS ice TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS rc TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS if_fiscal TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS website TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin TEXT;
+ALTER TABLE companies ADD COLUMN IF NOT EXISTS prefers_types TEXT[] DEFAULT '{}';
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opportunity_type TEXT;
 
 -- Users dashboard (credentials en base, rôles admin ; seed au 1er démarrage)
 CREATE TABLE IF NOT EXISTS users (
@@ -223,6 +266,9 @@ ALTER TABLE pipeline_runs    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_requests      ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_logs          ENABLE ROW LEVEL SECURITY;
 ALTER TABLE monitor_state    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sources          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE sectors          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE chat_messages    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE lg_messages_seen ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users            ENABLE ROW LEVEL SECURITY;
 ALTER TABLE waitlist         ENABLE ROW LEVEL SECURITY;

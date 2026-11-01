@@ -130,6 +130,16 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     tabAgents: "Observabilité Agents & IA",
     tabLogs: "Requêtes & Erreurs Pipeline",
     tabMonitor: "Monitoring Plateforme",
+    tabSources: "Sources de données",
+    sourcesSub: "Registre des portails surveillés — activer, ajouter, tester sans redéploiement.",
+    thSource: "Source", thKind: "Type", thAdapter: "Adaptateur", thCadence: "Cadence",
+    thLastRun: "Dernier run", thEnabled: "Active",
+    addSourceBtn: "+ Ajouter une source", testBtn: "Tester", delBtn: "Supprimer",
+    srcName: "Nom", srcUrl: "URL de base", srcKind: "Type (portal_html / rss)",
+    srcAdapter: "Adaptateur (marchespublics / generic_rss)", srcCadence: "Cadence (h)",
+    saveSrcBtn: "Enregistrer", cancelBtn: "Annuler", noSources: "Aucune source configurée.",
+    srcAdded: "Source ajoutée ✓", srcUpdated: "Source mise à jour ✓",
+    srcDeleted: "Source supprimée ✓", testOk: "Harvest OK :", testKo: "Harvest en échec :",
     monStatus: "Statut global",
     monWindow: "Fenêtre analysée",
     monChecks: "Vérifications",
@@ -226,6 +236,16 @@ const T: Record<"fr" | "ar", Record<string, string>> = {
     tabAgents: "مرقبة الوكلاء والذكاء الاصطناعي",
     tabLogs: "الطلبات وأخطاء المسار",
     tabMonitor: "مراقبة المنصة",
+    tabSources: "مصادر البيانات",
+    sourcesSub: "سجل البوابات المراقَبة — تفعيل وإضافة واختبار دون إعادة نشر.",
+    thSource: "المصدر", thKind: "النوع", thAdapter: "المحوّل", thCadence: "الوتيرة",
+    thLastRun: "آخر تشغيل", thEnabled: "مفعّلة",
+    addSourceBtn: "+ إضافة مصدر", testBtn: "اختبار", delBtn: "حذف",
+    srcName: "الاسم", srcUrl: "الرابط الأساسي", srcKind: "النوع (portal_html / rss)",
+    srcAdapter: "المحوّل (marchespublics / generic_rss)", srcCadence: "الوتيرة (ساعة)",
+    saveSrcBtn: "حفظ", cancelBtn: "إلغاء", noSources: "لا توجد مصادر مُعدّة.",
+    srcAdded: "أُضيف المصدر ✓", srcUpdated: "حُدّث المصدر ✓",
+    srcDeleted: "حُذف المصدر ✓", testOk: "الجلب نجح :", testKo: "فشل الجلب :",
     monStatus: "الحالة العامة",
     monWindow: "نطاق التحليل",
     monChecks: "الفحوصات",
@@ -332,14 +352,27 @@ function fmtS(s: number | string | null | undefined): string {
 
 export default function AdminPage() {
   const [lang, setLang] = useState<"fr" | "ar">("fr");
-  const [tab, setTab] = useState<"finances" | "agents" | "logs" | "monitor">("finances");
+  const [tab, setTab] = useState<"finances" | "agents" | "logs" | "monitor" | "sources">("finances");
   const [loaded, setLoaded] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
 
+  type SourceRow = {
+    id: string; name: string; base_url: string; kind: string; adapter: string;
+    cadence_hours: number; enabled: boolean; last_run_at: string | null; last_status: string | null;
+  };
+
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [sources, setSources] = useState<SourceRow[]>([]);
+  const [showSrcForm, setShowSrcForm] = useState(false);
+  const [srcEditId, setSrcEditId] = useState<string | null>(null);
+  const [sName, setSName] = useState("");
+  const [sUrl, setSUrl] = useState("");
+  const [sKind, setSKind] = useState("rss");
+  const [sAdapter, setSAdapter] = useState("generic_rss");
+  const [sCadence, setSCadence] = useState(24);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [requests, setRequests] = useState<RequestRow[]>([]);
   const [config, setConfig] = useState<AdminConfig | null>(null);
@@ -368,14 +401,16 @@ export default function AdminPage() {
   }, []);
 
   async function loadAll() {
-    const [s, c, o, cfg, mon] = await Promise.all([
+    const [s, c, o, cfg, mon, srcs] = await Promise.all([
       api<Summary>("/observability/summary?hours=24"),
       api<Company[]>("/companies"),
       api<{ requests: RequestRow[] }>("/observability?hours=24"),
       api<AdminConfig>("/admin/config"),
       api<MonitorReport>("/monitoring/report"),
+      api<SourceRow[]>("/admin/sources"),
     ]);
     setSummary(s);
+    setSources(srcs || []);
     setCompanies(c || []);
     setRequests((o && o.requests) || []);
     setConfig(cfg);
@@ -385,6 +420,59 @@ export default function AdminPage() {
   function showToast(m: string) {
     setToast(m);
     setTimeout(() => setToast(""), 3000);
+  }
+
+  function resetSrcForm() {
+    setSrcEditId(null); setSName(""); setSUrl("");
+    setSKind("rss"); setSAdapter("generic_rss"); setSCadence(24);
+    setShowSrcForm(false);
+  }
+
+  async function saveSource() {
+    setErr(""); setMsg(""); setBusy(true);
+    try {
+      const payload = { name: sName, base_url: sUrl, kind: sKind,
+                        adapter: sAdapter, cadence_hours: sCadence };
+      if (srcEditId) {
+        await api(`/admin/sources/${srcEditId}`, { method: "PATCH", body: JSON.stringify(payload) });
+        showToast(t("srcUpdated"));
+      } else {
+        await api("/admin/sources", { method: "POST", body: JSON.stringify(payload) });
+        showToast(t("srcAdded"));
+      }
+      resetSrcForm();
+      setSources(await api<SourceRow[]>("/admin/sources"));
+    } catch (exc) { setErr((exc as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function toggleSource(row: SourceRow) {
+    setBusy(true);
+    try {
+      await api(`/admin/sources/${row.id}`, { method: "PATCH", body: JSON.stringify({ enabled: !row.enabled }) });
+      setSources(await api<SourceRow[]>("/admin/sources"));
+    } catch (exc) { setErr((exc as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function testSource(row: SourceRow) {
+    setBusy(true); setMsg(""); setErr("");
+    try {
+      const r = await api<{ ok: boolean; items: number }>(`/admin/sources/${row.id}/test`, { method: "POST" });
+      showToast(`${t("testOk")} ${r.items}`);
+      setSources(await api<SourceRow[]>("/admin/sources"));
+    } catch (exc) { showToast(`${t("testKo")} ${(exc as Error).message.slice(0, 90)}`); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteSource(row: SourceRow) {
+    setBusy(true);
+    try {
+      await api(`/admin/sources/${row.id}`, { method: "DELETE" });
+      showToast(t("srcDeleted"));
+      setSources(await api<SourceRow[]>("/admin/sources"));
+    } catch (exc) { setErr((exc as Error).message); }
+    finally { setBusy(false); }
   }
 
   function toggleLang() {
@@ -508,6 +596,7 @@ export default function AdminPage() {
           ["agents", "🤖", t("tabAgents")],
           ["logs", "🔍", t("tabLogs")],
           ["monitor", "🩺", t("tabMonitor")],
+          ["sources", "📡", t("tabSources")],
         ] as const).map(([id, icon, label]) => (
           <button key={id} onClick={() => setTab(id)}
                   className={`tab-btn px-4 py-3 text-xs sm:text-sm font-medium text-muted hover:text-ink transition-all flex items-center gap-2 whitespace-nowrap ${tab === id ? "active" : ""}`}>
@@ -984,6 +1073,98 @@ export default function AdminPage() {
     </div>
   );
 
+  const sourcesEl = (
+    <div className="card p-5 space-y-4">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h3 className="font-display font-bold text-base text-ink">{t("tabSources")}</h3>
+          <p className="text-xs text-muted mt-1">{t("sourcesSub")}</p>
+        </div>
+        <button className="btn-primary text-sm px-4 py-2"
+                onClick={() => { setSrcEditId(null); setSName(""); setSUrl("");
+                  setSKind("rss"); setSAdapter("generic_rss"); setSCadence(24);
+                  setShowSrcForm(true); }}>
+          {t("addSourceBtn")}
+        </button>
+      </div>
+
+      {showSrcForm && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl border border-line bg-white">
+          <input className="input" placeholder={t("srcName")} value={sName} onChange={e => setSName(e.target.value)} />
+          <input className="input" placeholder={t("srcUrl")} value={sUrl} onChange={e => setSUrl(e.target.value)} />
+          <select className="input" value={sKind} onChange={e => setSKind(e.target.value)}>
+            <option value="portal_html">portal_html</option>
+            <option value="rss">rss</option>
+            <option value="api_json">api_json</option>
+          </select>
+          <select className="input" value={sAdapter} onChange={e => setSAdapter(e.target.value)}>
+            <option value="marchespublics">marchespublics</option>
+            <option value="generic_rss">generic_rss</option>
+          </select>
+          <input className="input" type="number" min={1} placeholder={t("srcCadence")}
+                 value={sCadence} onChange={e => setSCadence(Number(e.target.value) || 24)} />
+          <div className="flex gap-2 items-end">
+            <button className="btn-primary px-4 py-2 text-sm" disabled={busy} onClick={saveSource}>{t("saveSrcBtn")}</button>
+            <button className="px-4 py-2 text-sm text-muted" onClick={resetSrcForm}>{t("cancelBtn")}</button>
+          </div>
+        </div>
+      )}
+
+      {!sources.length ? (
+        <p className="text-sm text-muted">{t("noSources")}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-muted border-b border-line">
+                <th className="py-2 px-3">{t("thSource")}</th>
+                <th className="py-2 px-3">{t("thKind")}</th>
+                <th className="py-2 px-3">{t("thCadence")}</th>
+                <th className="py-2 px-3">{t("thLastRun")}</th>
+                <th className="py-2 px-3">{t("thStatus")}</th>
+                <th className="py-2 px-3">{t("thEnabled")}</th>
+                <th className="py-2 px-3"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sources.map(s => (
+                <tr key={s.id} className="border-b border-line/60">
+                  <td className="py-3 px-3">
+                    <div className="font-medium text-ink">{s.name}</div>
+                    <div className="text-xs text-muted truncate max-w-[240px]">{s.base_url}</div>
+                  </td>
+                  <td className="py-3 px-3 text-xs">{s.kind}<br /><span className="text-muted">{s.adapter}</span></td>
+                  <td className="py-3 px-3">{s.cadence_hours}h</td>
+                  <td className="py-3 px-3 text-xs">{s.last_run_at ? new Date(s.last_run_at).toLocaleString(lang === "ar" ? "ar" : "fr-FR") : "—"}</td>
+                  <td className="py-3 px-3 text-xs">
+                    <span className={s.last_status && s.last_status.startsWith("ok") ? "text-green-700" : "text-red-600"}>
+                      {s.last_status || "—"}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3">
+                    <button onClick={() => toggleSource(s)} disabled={busy}
+                            className={`px-2 py-1 rounded-full text-xs ${s.enabled ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-600"}`}>
+                      {s.enabled ? "ON" : "OFF"}
+                    </button>
+                  </td>
+                  <td className="py-3 px-3">
+                    <div className="flex gap-2 text-xs">
+                      <button className="underline" onClick={() => { setSrcEditId(s.id); setSName(s.name);
+                        setSUrl(s.base_url); setSKind(s.kind); setSAdapter(s.adapter);
+                        setSCadence(s.cadence_hours); setShowSrcForm(true); }}>✏️</button>
+                      <button className="underline" onClick={() => testSource(s)} disabled={busy}>▶ {t("testBtn")}</button>
+                      <button className="underline text-red-600" onClick={() => deleteSource(s)} disabled={busy}>{t("delBtn")}</button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+
   if (!loaded) {
     return <main className="page container"><p className="subtitle">{t("loading")}</p></main>;
   }
@@ -999,6 +1180,7 @@ export default function AdminPage() {
         {tab === "agents" && agentsEl}
         {tab === "logs" && logsEl}
         {tab === "monitor" && monitoringEl}
+        {tab === "sources" && sourcesEl}
       </main>
       {drawerEl}
       {toast && (

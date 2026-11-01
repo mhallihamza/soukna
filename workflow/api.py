@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from soukna_graph import config, db, monitoring
 from soukna_graph.graph import build_graph
-from soukna_graph.tools import emailer, whatsapp
+from soukna_graph.tools import emailer, seed_data, whatsapp
 
 app = FastAPI(title="Soukna Workflow API", version="1.1.0")
 app.add_middleware(
@@ -37,6 +37,21 @@ GRAPH = build_graph()
 def startup() -> None:
     try:
         db.init_db()
+        # Référentiel secteurs (18) : seed idempotent à chaque démarrage.
+        n_secteurs = db.sectors_ensure(seed_data.SECTORS)
+        print(f"[soukna] secteurs référentiel OK ({n_secteurs})")
+        # Source historique : enregistrée dans le registre si la table
+        # est vide (le portail national devient une source pilotable
+        # depuis la console comme les autres).
+        if not db.sources_list():
+            db.sources_upsert(
+                name="Portail national des marchés publics",
+                base_url=config.PORTAL_BASE,
+                kind="portal_html",
+                adapter="marchespublics",
+                cadence_hours=24,
+            )
+            print("[soukna] source historique enregistrée dans le registre")
         # Seed du compte admin en base (table users) si vide : les
         # credentials dashboard vivent en DB, l'env ne sert qu'au bootstrap.
         if db.count_users() == 0:
@@ -142,6 +157,24 @@ class ConfigPatch(BaseModel):
     kill_switch: bool | None = None
 
 
+class SourceBody(BaseModel):
+    name: str
+    base_url: str
+    kind: str = "portal_html"      # portal_html | rss | api_json
+    adapter: str = "marchespublics"  # marchespublics | generic_rss
+    cadence_hours: int = 24
+    enabled: bool = True
+
+
+class SourcePatch(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    kind: str | None = None
+    adapter: str | None = None
+    cadence_hours: int | None = None
+    enabled: bool | None = None
+
+
 class WaitlistNoteBody(BaseModel):
     admin_note: str
 
@@ -155,6 +188,18 @@ class OnboardingBody(BaseModel):
     size: str = "pme"
     whatsapp: str | None = None
     lang: str = "fr"
+    # Profil étendu optionnel (enrichit le matching)
+    budget_min: float | None = None
+    budget_max: float | None = None
+    certifications: list[str] = []
+    qualification: str | None = None
+    experience_years: int | None = None
+    ice: str | None = None
+    rc: str | None = None
+    if_fiscal: str | None = None
+    website: str | None = None
+    linkedin: str | None = None
+    prefers_types: list[str] = []
 
 
 class ProfilePatch(BaseModel):
@@ -167,6 +212,19 @@ class ProfilePatch(BaseModel):
     channel_email: bool | None = None
     max_guarantee: int | None = None
     alert_min_score: int | None = None
+    # Profil étendu (optionnel — enrichit le scoring LLM)
+    budget_min: float | None = None
+    budget_max: float | None = None
+    certifications: list[str] | None = None
+    qualification: str | None = None
+    experience_years: int | None = None
+    references_projets: list[dict[str, Any]] | None = None
+    ice: str | None = None
+    rc: str | None = None
+    if_fiscal: str | None = None
+    website: str | None = None
+    linkedin: str | None = None
+    prefers_types: list[str] | None = None
 
 
 class MatchPatch(BaseModel):
@@ -247,15 +305,25 @@ def webhook_verify(
 
 
 async def process_incoming(msg: dict[str, str]) -> None:
+    # Mémoire de conversation persistée : les 10 derniers messages du
+    # numéro alimentent le contexte (orchestrator, faq, response).
+    history = db.chat_history(msg.get("sender", ""), limit=10)
     state: dict[str, Any] = {
         "message": msg["text"],
         "sender_phone": msg["sender"],
         "sender_name": msg.get("name", ""),
         "message_id": msg["message_id"],
+        "history": history,
     }
     try:
         result = await GRAPH.ainvoke(state)
         request_id = result.get("request_id")
+        # Persistance de l'échange (sauf doublons/événements ignorés)
+        if result.get("route") not in {"duplicate_message", "ignored_event"}:
+            db.chat_save(msg.get("sender", ""), "user", msg["text"],
+                         result.get("intent"))
+            db.chat_save(msg.get("sender", ""), "assistant",
+                         result.get("reply_text", ""), result.get("intent"))
         if request_id:
             db.finalize_request(
                 request_id, route=result.get("route", "?"), outcome="ok",
@@ -320,6 +388,12 @@ async def run_pipeline_endpoint(_user: dict[str, Any] = Depends(require_admin)) 
         raise HTTPException(500, str(exc)[:300]) from exc
 
 
+@app.get("/sectors")
+def list_sectors() -> list[dict[str, Any]]:
+    """Référentiel secteurs FR/AR (public : utilisé par l'onboarding)."""
+    return db.sectors_list()
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok", "service": "soukna-workflow"}
@@ -359,6 +433,9 @@ def patch_profile(patch: ProfilePatch,
             patch.channel_email if patch.channel_email is not None
             else bool(company["channel_email"]),
         )
+    ext = {k: getattr(patch, k) for k in db.PROFILE_EXT_FIELDS if getattr(patch, k, None) is not None}
+    if ext:
+        db.update_company_profile_ext(company_id, ext)
     return _public_company(db.get_company(company_id) or company)
 
 
@@ -366,9 +443,14 @@ def patch_profile(patch: ProfilePatch,
 def get_opportunities(
     min_score: int = 0,
     limit: int = 100,
+    type: str | None = None,       # appel_offres | bon_commande | consultation
+    sector: str | None = None,
+    city: str | None = None,
     company: dict[str, Any] = Depends(require_entreprise),
 ) -> list[dict[str, Any]]:
-    return db.matches_for_company(str(company["id"]), min_score=min_score, limit=limit)
+    return db.matches_for_company(
+        str(company["id"]), min_score=min_score, limit=limit,
+        opp_type=type, sector=sector, city=city)
 
 
 @app.get("/digests")
@@ -507,6 +589,79 @@ def observability_summary(
             """
         )[0],
     }
+
+
+# -----------------------------------------------------------------------
+# Sources multiples (console admin : registre piloté à chaud)
+# -----------------------------------------------------------------------
+
+@app.get("/admin/sources")
+def admin_sources_list(_user: dict[str, Any] = Depends(require_admin)) -> list[dict[str, Any]]:
+    return db.sources_list()
+
+
+@app.post("/admin/sources")
+def admin_add_source(body: SourceBody,
+                     _user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    if body.kind not in {"portal_html", "rss", "api_json"}:
+        raise HTTPException(422, "kind invalide (portal_html | rss | api_json)")
+    if body.adapter not in {"marchespublics", "generic_rss"}:
+        raise HTTPException(422, "adaptateur inconnu (marchespublics | generic_rss)")
+    if not body.base_url.startswith(("http://", "https://")):
+        raise HTTPException(422, "base_url doit commencer par http(s)://")
+    return db.sources_upsert(**body.model_dump())
+
+
+@app.patch("/admin/sources/{source_id}")
+def admin_patch_source(source_id: str, patch: SourcePatch,
+                       _user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    current = db.sources_list()
+    row = next((s for s in current if str(s["id"]) == source_id), None)
+    if not row:
+        raise HTTPException(404, "Source introuvable")
+    data = {k: getattr(patch, k) for k in ("name", "base_url", "kind", "adapter",
+                                           "cadence_hours", "enabled")
+            if getattr(patch, k, None) is not None}
+    if data.get("kind") and data["kind"] not in {"portal_html", "rss", "api_json"}:
+        raise HTTPException(422, "kind invalide")
+    if data.get("adapter") and data["adapter"] not in {"marchespublics", "generic_rss"}:
+        raise HTTPException(422, "adaptateur inconnu")
+    if "enabled" in data:
+        db.sources_set_enabled(source_id, bool(data.pop("enabled")))
+    if data:
+        merged = {**{k: row.get(k) for k in ("name", "base_url", "kind", "adapter",
+                                             "cadence_hours")}, **data}
+        db.sources_upsert(**merged, source_id=source_id)
+    updated = [s for s in db.sources_list() if str(s["id"]) == source_id]
+    return updated[0] if updated else row
+
+
+@app.delete("/admin/sources/{source_id}")
+def admin_delete_source(source_id: str,
+                        _user: dict[str, Any] = Depends(require_admin)) -> dict[str, bool]:
+    return {"deleted": db.sources_delete(source_id) > 0}
+
+
+@app.post("/admin/sources/{source_id}/test")
+def admin_test_source(source_id: str,
+                      _user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    """Harvest immédiat d'une seule source : vérifie le scraper à chaud."""
+    row = next((s for s in db.sources_list() if str(s["id"]) == source_id), None)
+    if not row:
+        raise HTTPException(404, "Source introuvable")
+    from soukna_graph.tools.scrapers import get_adapter
+    adapter = get_adapter(row.get("adapter", ""))
+    if adapter is None:
+        raise HTTPException(422, "adaptateur inconnu")
+    try:
+        items = adapter(dict(row)) or []
+        db.sources_update_status(source_id, f"ok items={len(items)} (test)")
+        return {"ok": True, "items": len(items),
+                "sample": [{"title": i.get("title"), "type": i.get("opportunity_type")}
+                           for i in items[:3]]}
+    except Exception as exc:
+        db.sources_update_status(source_id, f"failed {type(exc).__name__}: {str(exc)[:120]}")
+        raise HTTPException(502, f"échec du harvest : {type(exc).__name__}: {str(exc)[:160]}")
 
 
 @app.get("/monitoring/report")
@@ -854,6 +1009,11 @@ def onboarding_confirm(token: str, body: OnboardingBody) -> dict[str, Any]:
                               owner_email=email, lang=lang, trial_days=TRIAL_DAYS)
     # Canaux de livraison : email toujours actif, WhatsApp si numéro fourni.
     db.set_channel_prefs(str(company["id"]), bool(body.whatsapp), True)
+    # Profil étendu optionnel (budget, certifications, qualification…)
+    ext = {k: getattr(body, k) for k in db.PROFILE_EXT_FIELDS
+           if getattr(body, k, None) not in (None, [])}
+    if ext:
+        db.update_company_profile_ext(str(company["id"]), ext)
     db.waitlist_update(wid, status="active", activated_at=db.utcnow())
     db.mark_token_used(token)
     db.audit(email, "activate", wid,

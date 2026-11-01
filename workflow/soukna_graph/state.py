@@ -26,6 +26,8 @@ class AgentState(TypedDict, total=False):
     # Données métier circulant entre agents
     ingested: int
     source_mode: str
+    source_detail: str             # statut par source (multi-sources)
+    history: list[dict[str, Any]]  # mémoire de conversation (chat)
     company: dict[str, Any]     # profil de l'entreprise courante (chat)
     matches: list[dict[str, Any]]
     digest_items: list[dict[str, Any]]

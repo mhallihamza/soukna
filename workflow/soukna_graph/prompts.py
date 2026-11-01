@@ -32,6 +32,9 @@ si le message en mentionne explicitement.
 
 La langue ("fr" | "en" | "ar") est celle du MESSAGE (un message en arabe => "ar").
 
+Si un HISTORIQUE est fourni, utilise-le : « et le montant ? » ou
+« la deuxième » font référence aux messages précédents.
+
 Réponds UNIQUEMENT avec l'objet JSON, sans texte autour."""
 
 MATCHING_SYSTEM = """Tu es l'agent de matching de Soukna : tu évalues

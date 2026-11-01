@@ -92,6 +92,12 @@ function OnboardingInner() {
   const [cities, setCities] = useState<string[]>([]);
   const [keywords, setKeywords] = useState<string[]>([]);
   const [kwInput, setKwInput] = useState("");
+  const [showAdv, setShowAdv] = useState(false);
+  const [budgetMin, setBudgetMin] = useState("");
+  const [budgetMax, setBudgetMax] = useState("");
+  const [certs, setCerts] = useState("");
+  const [qualif, setQualif] = useState("");
+  const [expYears, setExpYears] = useState("");
   const [size, setSize] = useState("pme");
   const [whatsapp, setWhatsapp] = useState("");
   const [busy, setBusy] = useState(false);
@@ -151,6 +157,11 @@ function OnboardingInner() {
         body: JSON.stringify({
           password, company_name: name, sector, cities, keywords,
           size, whatsapp: whatsapp || null, lang,
+          budget_min: budgetMin ? Number(budgetMin) : null,
+          budget_max: budgetMax ? Number(budgetMax) : null,
+          certifications: certs.split(",").map((x) => x.trim()).filter(Boolean),
+          qualification: qualif || null,
+          experience_years: expYears ? parseInt(expYears, 10) : null,
         }),
       });
       const body = await r.json().catch(() => null);
@@ -304,6 +315,44 @@ function OnboardingInner() {
                 <input value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} placeholder="+212 6…"
                        className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink placeholder-muted focus:bg-white focus:border-greenbrand" />
               </label>
+            </div>
+
+            {/* Profil avancé : 100% optionnel, enrichit le scoring IA */}
+            <div className="rounded-xl border border-line bg-paper/30 overflow-hidden">
+              <button type="button" onClick={() => setShowAdv(!showAdv)}
+                      className="w-full flex items-center justify-between px-4 py-3 text-xs font-bold text-ink">
+                <span>{lang === "ar" ? "ملف متقدم (اختياري — يحسّن دقة التقييم)" : "Profil avancé (optionnel — améliore la précision du scoring)"}</span>
+                <span>{showAdv ? "▲" : "▼"}</span>
+              </button>
+              {showAdv && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 px-4 pb-4">
+                  <label className="block text-xs font-bold text-ink">
+                    {lang === "ar" ? "الميزانية الدنيا (درهم)" : "Budget min (MAD)"}
+                    <input type="number" min={0} value={budgetMin} onChange={(e) => setBudgetMin(e.target.value)}
+                           className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink" />
+                  </label>
+                  <label className="block text-xs font-bold text-ink">
+                    {lang === "ar" ? "الميزانية القصوى (درهم)" : "Budget max (MAD)"}
+                    <input type="number" min={0} value={budgetMax} onChange={(e) => setBudgetMax(e.target.value)}
+                           className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink" />
+                  </label>
+                  <label className="block text-xs font-bold text-ink sm:col-span-2">
+                    {lang === "ar" ? "الشهادات (مفصولة بفواصل)" : "Certifications (séparées par ,)"}
+                    <input value={certs} onChange={(e) => setCerts(e.target.value)} placeholder="ISO 9001, ISO 14001"
+                           className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink" />
+                  </label>
+                  <label className="block text-xs font-bold text-ink">
+                    {lang === "ar" ? "التصنيف" : "Qualification / classement"}
+                    <input value={qualif} onChange={(e) => setQualif(e.target.value)} placeholder="Classe II — Travaux publics"
+                           className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink" />
+                  </label>
+                  <label className="block text-xs font-bold text-ink">
+                    {lang === "ar" ? "سنوات الخبرة" : "Années d'expérience"}
+                    <input type="number" min={0} value={expYears} onChange={(e) => setExpYears(e.target.value)}
+                           className="mt-1 w-full bg-paper/40 border border-line rounded-lg px-3 py-2.5 text-xs text-ink" />
+                  </label>
+                </div>
+              )}
             </div>
 
             <div className="pt-2 space-y-2">

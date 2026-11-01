@@ -45,6 +45,9 @@ def build_digest_text(company: dict[str, Any] | None, items: list[dict[str, Any]
             "\nAucune nouvelle opportunité correspondant à votre profil aujourd'hui.\n"
             "Analyse indicative — le dossier officiel fait foi."
         )
+    type_labels = {"bon_commande": "📦 Bon de commande",
+                   "consultation": "📝 Consultation",
+                   "appel_offres": "📋 Appel d'offres"}
     ordered = sorted(items, key=lambda i: -int(i.get("match_score") or 0))
     lines = [header, ""]
     for rank, it in enumerate(ordered[:5], 1):
@@ -54,8 +57,10 @@ def build_digest_text(company: dict[str, Any] | None, items: list[dict[str, Any]
         )
         lines.append(f"   {it.get('title')}")
         loc = it.get("city") or it.get("region") or "—"
+        otype = type_labels.get(it.get("opportunity_type") or "", "")
         lines.append(
             f"   📍 {loc} · ⏳ {_fmt_date(it.get('deadline'))} · Réf. {it.get('source_ref')}"
+            + (f" · {otype}" if otype else "")
         )
         if it.get("risks"):
             lines.append("   ⚠️ " + " ; ".join(str(r) for r in it["risks"][:2]))

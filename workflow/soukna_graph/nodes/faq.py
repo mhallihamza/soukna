@@ -37,13 +37,23 @@ def detect_language(message: str) -> str | None:
     return "ar" if re.search(r"[\u0600-\u06FF]", message or "") else None
 
 
-def _build_prompt(question: str, context: str, language: str) -> str:
+def _build_prompt(question: str, context: str, language: str,
+                  history: list[dict] | None = None) -> str:
+    convo = ""
+    if history:
+        lines = "\n".join(f"- {h['role']}: {str(h['content'])[:160]}"
+                          for h in history[-6:])
+        convo = ("HISTORIQUE RÉCENT DE CETTE CONVERSATION (le plus récent "
+                 f"en dernier) :\n{lines}\n\n"
+                 "Si la question s'appuie sur cet historique (« et pour la "
+                 "deuxième ? », « et le tarif ? »), exploite-le.\n\n")
     return (
         "Tu es l'agent FAQ de Soukna, plateforme marocaine de veille des "
         "marchés publics. Tu réponds aux questions standards des entreprises "
         "(présentation, tarifs, compte, matching, guide d'utilisation, "
         "données, contact) en t'appuyant EXCLUSIVEMENT sur les EXTRATS "
         "ci-dessous de notre base de connaissances.\n\n"
+        f"{convo}"
         "RÈGLES :\n"
         "- Réponds dans la langue de la question indiquée ci-dessous.\n"
         "- Si les extrats ne suffisent pas, dis-le et invite "
@@ -100,7 +110,8 @@ def faq_node(state: AgentState) -> dict[str, Any]:
         return result
 
     try:
-        resp = llm.invoke(_build_prompt(question, context, language))
+        resp = llm.invoke(_build_prompt(question, context, language,
+                                  state.get("history") or []))
         answer = (getattr(resp, "content", "") or "").strip()
         if not answer:
             raise ValueError("réponse LLM vide")

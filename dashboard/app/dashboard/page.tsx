@@ -25,11 +25,20 @@ type Profile = {
   plan: string;
   trial_started_at: string | null;
   trial_ends_at: string | null;
+  // profil étendu (optionnel)
+  budget_min: number | null;
+  budget_max: number | null;
+  certifications: string[] | null;
+  qualification: string | null;
+  experience_years: number | null;
+  website: string | null;
+  linkedin: string | null;
 };
 
 type Opp = {
   id: string;
   opportunity_id: string;
+  opportunity_type: string | null;
   match_score: number;
   reasons: string[] | null;
   verdict: string | null; // go | a_etudier | no_go
@@ -313,6 +322,7 @@ export default function DashboardPage() {
   const [sector, setSector] = useState("all");
   const [city, setCity] = useState("all");
   const [verdict, setVerdict] = useState("all");
+  const [otype, setOtype] = useState("all");
   const [sort, setSort] = useState("score");
 
   // Drawer
@@ -325,6 +335,11 @@ export default function DashboardPage() {
   const [fRegions, setFRegions] = useState("");
   const [fSize, setFSize] = useState("pme");
   const [fGuarantee, setFGuarantee] = useState("");
+  const [fBudgetMin, setFBudgetMin] = useState("");
+  const [fBudgetMax, setFBudgetMax] = useState("");
+  const [fCerts, setFCerts] = useState("");
+  const [fQualif, setFQualif] = useState("");
+  const [fExp, setFExp] = useState("");
 
   // Alertes
   const [waEnabled, setWaEnabled] = useState(true);
@@ -353,6 +368,11 @@ export default function DashboardPage() {
         setFRegions((p.regions || []).join(", "));
         setFSize(p.size || "pme");
         setFGuarantee(p.max_guarantee != null ? String(p.max_guarantee) : "");
+        setFBudgetMin(p.budget_min != null ? String(p.budget_min) : "");
+        setFBudgetMax(p.budget_max != null ? String(p.budget_max) : "");
+        setFCerts((p.certifications || []).join(", "));
+        setFQualif(p.qualification || "");
+        setFExp(p.experience_years != null ? String(p.experience_years) : "");
         setWaEnabled(!!p.channel_whatsapp);
         setMailEnabled(!!p.channel_email);
         setThresh(p.alert_min_score || 70);
@@ -419,7 +439,8 @@ export default function DashboardPage() {
       const matchSector = sector === "all" || o.sector === sector;
       const matchCity = city === "all" || o.city === city;
       const matchVerdict = verdict === "all" || verdictKey(o.verdict) === verdict;
-      return matchKw && matchSector && matchCity && matchVerdict;
+      const matchType = otype === "all" || (o.opportunity_type || "appel_offres") === otype;
+      return matchKw && matchSector && matchCity && matchVerdict && matchType;
     });
     out.sort((a, b) => {
       if (sort === "deadline") {
@@ -428,7 +449,7 @@ export default function DashboardPage() {
       return b.match_score - a.match_score;
     });
     return out;
-  }, [opps, kw, sector, city, verdict, sort, lang]);
+  }, [opps, kw, sector, city, verdict, sort, lang, otype]);
 
   const saved = useMemo(() => opps.filter((o) => o.saved), [opps]);
   const activeOpp = activeId ? opps.find((o) => o.id === activeId) : null;
@@ -487,6 +508,11 @@ export default function DashboardPage() {
           regions: split(fRegions),
           size: fSize,
           max_guarantee: fGuarantee ? parseInt(fGuarantee, 10) : null,
+          budget_min: fBudgetMin ? Number(fBudgetMin) : null,
+          budget_max: fBudgetMax ? Number(fBudgetMax) : null,
+          certifications: split(fCerts),
+          qualification: fQualif || null,
+          experience_years: fExp ? parseInt(fExp, 10) : null,
         }),
       });
       setProfile(p);
@@ -524,6 +550,7 @@ export default function DashboardPage() {
     setSector("all");
     setCity("all");
     setVerdict("all");
+    setOtype("all");
     setSort("score");
   }
 
@@ -691,6 +718,13 @@ export default function DashboardPage() {
               <span className="text-[10px] uppercase font-bold text-terra tracking-wider block">{o.source_ref}</span>
               <h3 className="font-display font-bold text-sm text-ink leading-snug mt-0.5 line-clamp-2">{o.title}</h3>
               <div className="text-[11px] text-muted mt-1">{o.buyer || "—"}</div>
+              {o.opportunity_type && o.opportunity_type !== "appel_offres" && (
+                <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">
+                  {o.opportunity_type === "bon_commande"
+                    ? (lang === "ar" ? "أمر بالتأدية" : "Bon de commande")
+                    : (lang === "ar" ? "استشارة" : "Consultation")}
+                </span>
+              )}
             </div>
             <div className="flex flex-col items-center justify-center flex-shrink-0">
               <div className="w-12 h-12 relative flex items-center justify-center">
@@ -775,6 +809,12 @@ export default function DashboardPage() {
               <option value="go">{t("verdictGo")}</option>
               <option value="study">{t("verdictStudy")}</option>
               <option value="nogo">{t("verdictNogo")}</option>
+            </select>
+            <select value={otype} onChange={(e) => setOtype(e.target.value)} className="flex-1 min-w-[120px] bg-paper/50 border border-line rounded-md px-2.5 py-2 text-ink focus:bg-white focus:border-greenbrand">
+              <option value="all">{lang === "ar" ? "كل الأنواع" : "Tous les types"}</option>
+              <option value="appel_offres">{lang === "ar" ? "مناقصة" : "Appel d'offres"}</option>
+              <option value="bon_commande">{lang === "ar" ? "أمر بالتأدية" : "Bon de commande"}</option>
+              <option value="consultation">{lang === "ar" ? "استشارة" : "Consultation"}</option>
             </select>
             <button onClick={resetFilters} className="bg-paper hover:bg-line border border-line text-muted hover:text-ink px-3 py-2 rounded-md font-semibold transition-all">
               {t("resetBtn")}
@@ -924,6 +964,31 @@ export default function DashboardPage() {
             <label className="block text-xs font-bold text-ink">
               {t("profileGuaranteeLabel")}
               <input type="number" min={0} value={fGuarantee} onChange={(e) => setFGuarantee(e.target.value)}
+                     className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
+            </label>
+            <label className="block text-xs font-bold text-ink">
+              {lang === "ar" ? "الميزانية الدنيا (درهم)" : "Budget min (MAD)"}
+              <input type="number" min={0} value={fBudgetMin} onChange={(e) => setFBudgetMin(e.target.value)}
+                     className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
+            </label>
+            <label className="block text-xs font-bold text-ink">
+              {lang === "ar" ? "الميزانية القصوى (درهم)" : "Budget max (MAD)"}
+              <input type="number" min={0} value={fBudgetMax} onChange={(e) => setFBudgetMax(e.target.value)}
+                     className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
+            </label>
+            <label className="block text-xs font-bold text-ink">
+              {lang === "ar" ? "الشهادات (مفصولة بفواصل)" : "Certifications (séparées par ,)"}
+              <input value={fCerts} onChange={(e) => setFCerts(e.target.value)} placeholder="ISO 9001, ISO 14001"
+                     className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
+            </label>
+            <label className="block text-xs font-bold text-ink">
+              {lang === "ar" ? "التصنيف" : "Qualification / classement"}
+              <input value={fQualif} onChange={(e) => setFQualif(e.target.value)} placeholder="Classe II — Travaux publics"
+                     className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
+            </label>
+            <label className="block text-xs font-bold text-ink">
+              {lang === "ar" ? "سنوات الخبرة" : "Années d'expérience"}
+              <input type="number" min={0} value={fExp} onChange={(e) => setFExp(e.target.value)}
                      className="mt-1 w-full bg-paper/50 border border-line rounded px-3 py-2 text-xs font-semibold text-ink" />
             </label>
             <label className="block text-xs font-bold text-ink">
