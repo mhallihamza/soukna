@@ -301,6 +301,12 @@ ALTER TABLE companies ADD COLUMN IF NOT EXISTS linkedin TEXT;
 ALTER TABLE companies ADD COLUMN IF NOT EXISTS prefers_types TEXT[] DEFAULT '{}';
 -- Typologie des opportunités (AO ouvert/restreint, bon de commande, ...)
 ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS opportunity_type TEXT;
+-- "Nouveau" = vu pour la première fois par Soukna (stratégie sans filtre
+-- de dates : la diff contre la base dit ce qui est neuf)
+ALTER TABLE opportunities ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMPTZ
+  NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS idx_opportunities_first_seen
+  ON opportunities(first_seen_at DESC);
 """
 
 # Le formulaire de la landing écrit dans waitlist via la clé publishable
@@ -503,7 +509,8 @@ def upsert_match(*, opportunity_id: str, company_id: str, match_score: int,
 
 def matches_for_company(company_id: str, *, min_score: int = 0, limit: int = 30,
                         opp_type: str | None = None, sector: str | None = None,
-                        city: str | None = None) -> list[dict[str, Any]]:
+                        city: str | None = None,
+                        new_since_hours: int | None = None) -> list[dict[str, Any]]:
     """Matches de l'entreprise, avec filtres optionnels :
     type d'opportunité (appel_offres/bon_commande/consultation), secteur, ville."""
     sql = """
@@ -521,6 +528,9 @@ def matches_for_company(company_id: str, *, min_score: int = 0, limit: int = 30,
     if city:
         sql += " AND o.city ILIKE %s"
         params.append(f"%{city}%")
+    if new_since_hours:
+        sql += " AND o.first_seen_at > now() - %s * INTERVAL '1 hour'"
+        params.append(new_since_hours)
     sql += " ORDER BY m.match_score DESC, o.deadline LIMIT %s"
     params.append(limit)
     return query(sql, tuple(params))

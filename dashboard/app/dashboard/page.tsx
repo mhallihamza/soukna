@@ -55,6 +55,7 @@ type Opp = {
   deadline: string | null;
   amount: string | null;
   source_ref: string;
+  first_seen_at: string | null;
   url: string | null;
 };
 
@@ -323,6 +324,7 @@ export default function DashboardPage() {
   const [city, setCity] = useState("all");
   const [verdict, setVerdict] = useState("all");
   const [otype, setOtype] = useState("all");
+  const [fNew, setFNew] = useState(false);
   const [sort, setSort] = useState("score");
 
   // Drawer
@@ -377,7 +379,7 @@ export default function DashboardPage() {
         setMailEnabled(!!p.channel_email);
         setThresh(p.alert_min_score || 70);
         const [o, s, n, d] = await Promise.all([
-          api<Opp[]>("/opportunities"),
+          api<Opp[]>(fNew ? "/opportunities?new_since_hours=24" : "/opportunities"),
           api<Stats>("/company/stats"),
           api<Notif[]>("/notifications"),
           api<Digest[]>("/digests"),
@@ -393,6 +395,17 @@ export default function DashboardPage() {
       }
     })();
   }, []);
+
+  // Re-fetch des opportunités quand le filtre « nouveaux 24 h » change
+  useEffect(() => {
+    if (!loaded) return;
+    (async () => {
+      try {
+        setOpps(await api<Opp[]>(
+          fNew ? "/opportunities?new_since_hours=24" : "/opportunities"));
+      } catch (exc) { setErr((exc as Error).message); }
+    })();
+  }, [fNew, loaded]);
 
   function showToast(msg: string) {
     setToast(msg);
@@ -718,6 +731,11 @@ export default function DashboardPage() {
               <span className="text-[10px] uppercase font-bold text-terra tracking-wider block">{o.source_ref}</span>
               <h3 className="font-display font-bold text-sm text-ink leading-snug mt-0.5 line-clamp-2">{o.title}</h3>
               <div className="text-[11px] text-muted mt-1">{o.buyer || "—"}</div>
+              {o.first_seen_at && (Date.now() - new Date(o.first_seen_at).getTime()) < 24 * 3600 * 1000 && (
+                <span className="inline-block mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-greenbrand text-white">
+                  {lang === "ar" ? "جديد" : "NOUVEAU"}
+                </span>
+              )}
               {o.opportunity_type && o.opportunity_type !== "appel_offres" && (
                 <span className="inline-block mt-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-100 text-amber-800">
                   {o.opportunity_type === "bon_commande"
@@ -816,6 +834,10 @@ export default function DashboardPage() {
               <option value="bon_commande">{lang === "ar" ? "أمر بالتأدية" : "Bon de commande"}</option>
               <option value="consultation">{lang === "ar" ? "استشارة" : "Consultation"}</option>
             </select>
+            <button onClick={() => { setFNew(!fNew); }}
+                    className={`px-3 py-2 rounded-md text-xs font-bold border transition-all ${fNew ? "bg-greenbrand text-white border-greenbrand" : "bg-paper/50 border-line text-muted hover:text-ink"}`}>
+              {lang === "ar" ? "🆕 جديد 24س" : "🆕 Nouveaux 24h"}
+            </button>
             <button onClick={resetFilters} className="bg-paper hover:bg-line border border-line text-muted hover:text-ink px-3 py-2 rounded-md font-semibold transition-all">
               {t("resetBtn")}
             </button>

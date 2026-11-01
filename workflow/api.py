@@ -459,11 +459,13 @@ def get_opportunities(
     type: str | None = None,       # appel_offres | bon_commande | consultation
     sector: str | None = None,
     city: str | None = None,
+    new_since_hours: int | None = None,   # "nouveau pour vous" = first_seen récent
     company: dict[str, Any] = Depends(require_entreprise),
 ) -> list[dict[str, Any]]:
     return db.matches_for_company(
         str(company["id"]), min_score=min_score, limit=limit,
-        opp_type=type, sector=sector, city=city)
+        opp_type=type, sector=sector, city=city,
+        new_since_hours=new_since_hours)
 
 
 @app.get("/digests")
@@ -475,6 +477,10 @@ def get_digests(company: dict[str, Any] = Depends(require_entreprise)) -> list[d
 def company_stats(company: dict[str, Any] = Depends(require_entreprise)) -> dict[str, Any]:
     stats = db.company_stats(str(company["id"]))
     stats["alert_min_score"] = company.get("alert_min_score") or 70
+    stats["new_today"] = db.query(
+        "SELECT count(*) AS n FROM matches m JOIN opportunities o ON o.id = m.opportunity_id "
+        "WHERE m.company_id = %s AND o.first_seen_at > now() - interval '24 hours'",
+        (str(company["id"]),))[0]["n"]
     return stats
 
 
