@@ -252,11 +252,13 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
         return _parse_rows(r1.text)
 
 
-def fetch_consultations(max_items: int = 45, per_term: int = 6) -> list[dict[str, Any]]:
+def fetch_consultations(max_items: int = 120, per_term: int = 15) -> list[dict[str, Any]]:
     """Agrège les consultations par secteur (1 recherche rapide chacun).
 
-    Résilient : un terme en échec n'empêche pas les autres ; une exception
-    n'est levée que si AUCUN terme ne aboutit (repli seeds appelant).
+    La page de résultats contient jusqu'à ~60 lignes : lire 15 par terme
+    ne coûte RIEN de plus (même page téléchargée). Résilient : un terme
+    en échec n'empêche pas les autres ; une exception n'est levée que si
+    AUCUN terme n'aboutit (repli seeds appelant).
     """
     collected: dict[str, dict[str, Any]] = {}
     for sector, term in SEARCH_TERMS.items():
