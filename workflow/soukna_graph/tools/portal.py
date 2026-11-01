@@ -338,14 +338,29 @@ def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
             _time.sleep(2.0)                # re-tenter la même cible
             continue
         m = re.search(
-            r'id="(ctl0_CONTENU_PAGE_resultSearch_PagerBottom_ctl\d+)"'
+            r'id="ctl0_CONTENU_PAGE_resultSearch_PagerBottom_(ctl\d+)"'
             r'[^>]*>\s*<img[^>]*fleche-suivant', html)
         if not m:
             break                           # dernière page : pager suivant inactif
         fields = _parse_form(html)          # PAGESTATE frais de CETTE page
-        fields["PRADO_POSTBACK_TARGET"] = m.group(1).replace("_", "$")
-        # PRADO exige le paramètre de commande : sans lui le pager
-        # ré-serve la page 1 (bug corrigé, audit 2026-11-01)
+        # ATTENTION : CONTENU_PAGE contient un underscore littéral — ne
+        # JAMAIS remplacer tous les « _ » par « $ » (target invalide => le
+        # portail ré-serve la page 1 en silence, bug racine de la phase 1).
+        fields["PRADO_POSTBACK_TARGET"] = (
+            f"ctl0$CONTENU_PAGE$resultSearch$PagerBottom${m.group(1)}")
+        # PRADO exige le paramètre de commande ET la RE-CRITÈRE : la page
+        # de résultats ne ré-echo pas keywordSearch — sans la re-forcer,
+        # le pager ré-exécute la recherche SANS filtre et ré-serve la
+        # même page (cause racine trouvée le 2026-11-01 : 44 uniques
+        # pour « gardiennage » avec le critère re-forcé, contre 9-10 sans).
+        if keyword:
+            fields["ctl0$CONTENU_PAGE$AdvancedSearch$keywordSearch"] = keyword
+        if annonce_type:
+            fields["ctl0$CONTENU_PAGE$AdvancedSearch$annonceType"] = str(annonce_type)
+        if date_start:
+            fields["ctl0$CONTENU_PAGE$AdvancedSearch$dateMiseEnLigneCalculeStart"] = date_start
+        if date_end:
+            fields["ctl0$CONTENU_PAGE$AdvancedSearch$dateMiseEnLigneCalculeEnd"] = date_end
         fields["PRADO_POSTBACK_PARAMETER"] = "next"
         _time.sleep(1.0)                    # politesse portail
     return list(collected.values()), stats

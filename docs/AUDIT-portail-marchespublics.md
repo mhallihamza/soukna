@@ -99,3 +99,16 @@ sur un back-end, le postback suivant retombe sur un autre.
 2 re-tentatives, arrêt honnête, stats complètes) + le paramètre de
 commande. À poursuivre : re-recherche de ré-établissement entre
 répétitions + test multi-sessions ; puis phases 2-5.
+
+## 8. CAUSE RACINE DÉFINITIVE TROUVÉE (pagination 100 % fiable)
+
+Le `.replace("_", "$")` sur l'ID du bouton pager corrompait
+`CONTENU_PAGE` → `CONTENU$PAGE` (l'underscore est LITTÉRAL dans le nom
+de la zone). Cible invalide → le portail ré-servait la page 1 en
+silence. Tout le « caractère aléatoire » observé venait de là.
+
+**Fix** : extraire uniquement le suffixe `ctlN` du bouton détecté et
+reconstruire `ctl0$CONTENU_PAGE$resultSearch$PagerBottom$ctlN`.
+
+**PREUVES (gardiennage, max_pages=12)** : pages=12, répétées=0,
+bruts=120, uniques=84, durée 74 s. La pagination est fiable.
