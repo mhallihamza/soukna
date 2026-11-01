@@ -82,3 +82,20 @@ Toutes les conclusions ci-dessous sont vérifiées par requêtes, pas supposées
   fiable ; la couverture « 20 000 » est un mirage (accumulation d'années,
   majoritairement expirée). Priorité qualité : fenêtre de fraîcheur +
   mots-clés larges + statuts officiels via annonceType (à exploiter).
+
+## 7. PHASE 1 — Résultat du fix pagination (2026-11-01 soir)
+
+**Cause racine trouvée** : le postback du pager PRADO exige
+`PRADO_POSTBACK_PARAMETER = "next"` (paramètre de commande). Sans lui →
+la page 1 est re-servie (preuve : variant ctl2+param → 6 nouveaux refs
+contre 0 sans param, même session).
+
+**Mais** : le comportement reste NON DÉTERMINISTE entre sessions
+(re-test du walker complet → 3 pages répétées, 9 uniques). Hypothèse
+principale : load-balancer sans sessions collantes — l'état PRADO vit
+sur un back-end, le postback suivant retombe sur un autre.
+
+**État du code** : `advanced_search()` robuste (comptage des répétitions,
+2 re-tentatives, arrêt honnête, stats complètes) + le paramètre de
+commande. À poursuivre : re-recherche de ré-établissement entre
+répétitions + test multi-sessions ; puis phases 2-5.
