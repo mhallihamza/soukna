@@ -2,8 +2,14 @@
 # Digest quotidien — pipeline complet planifié (fichier séparé de ci.yml
 # pour pouvoir le tester manuellement sans déclencher live-eval).
 #
+#   ⚠️ DÉSACTIVÉ : le déclenchement quotidien est assuré par cron-job.org
+#   (punctuel) → POST /cron/run avec X-Cron-Secret. GitHub Actions ne
+#   garantit PAS l'heure (retards observés de 7 à 10 h). Garder les DEUX
+#   déclencheurs provoquerait des digests en DOUBLE.
+#   Pour revenir au cron GitHub : décommenter le bloc `schedule:` ci-
+#   dessous et re-désactiver le cron-job.org.
 #   • cron : 07:00 UTC = 08:00 heure du Maroc (UTC+1)
-#   • workflow_dispatch avec input confirm=true : test manuel
+#   • workflow_dispatch avec input confirm=true : test manuel (conservé)
 #
 # ⚠️ KILL_SWITCH=false : ce job envoie les digests RÉELS (WhatsApp/email)
 # aux entreprises actives. C'est le but — d'où la confirmation manuelle.
@@ -13,8 +19,8 @@
 name: Digest quotidien
 
 on:
-  schedule:
-    - cron: "0 7 * * *"
+  # schedule:
+  #   - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       confirm:

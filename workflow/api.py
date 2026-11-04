@@ -4,6 +4,7 @@
 # =====================================================================
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -390,8 +391,8 @@ async def webhook(request: Request, tasks: BackgroundTasks) -> dict[str, bool]:
 # Pipeline (admin)
 # -----------------------------------------------------------------------
 
-@app.post("/run")
-async def run_pipeline_endpoint(_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+async def _execute_pipeline() -> dict[str, Any]:
+    """Exécute le graphe pipeline complet et trace le run en base."""
     run_id = db.start_pipeline_run()
     try:
         result = await GRAPH.ainvoke({
@@ -425,6 +426,73 @@ async def run_pipeline_endpoint(_user: dict[str, Any] = Depends(require_admin)) 
             digests=0, status="error", error=str(exc)[:300],
         )
         raise HTTPException(500, str(exc)[:300]) from exc
+
+
+async def _pipeline_keepalive(stop: "asyncio.Event") -> None:
+    """Ping /health toutes les 60 s pendant le pipeline de fond.
+
+    Render Free éteint l'instance après ~15 min sans requête entrante :
+    un pipeline de fond de 30-60 min serait tué à mi-course. Le ping
+    local maintient l'instance éveillée jusqu'à la fin du run.
+    """
+    import os
+
+    import requests as _requests
+
+    port = os.getenv("PORT", "8000")
+    url = f"http://127.0.0.1:{port}/health"
+    while not stop.is_set():
+        try:
+            await asyncio.to_thread(_requests.get, url, timeout=5)
+        except Exception:
+            pass  # pas critique : on retente au prochain cycle
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            pass
+
+
+async def _pipeline_background_task() -> None:
+    """Exécute le pipeline hors requête HTTP (déclencheur cron externe).
+
+    Jamais d'HTTPException ici : tout est journalisé via pipeline_runs
+    (statut error) — le déclencheur externe n'est plus connecté de toute
+    façon. Le run reste traçable dans la console admin.
+    """
+    stop = asyncio.Event()
+    keepalive = asyncio.create_task(_pipeline_keepalive(stop))
+    try:
+        await _execute_pipeline()
+    except Exception:
+        pass  # déjà journalisé (pipeline_runs, status=error) par _execute_pipeline
+    finally:
+        stop.set()
+        keepalive.cancel()
+
+
+@app.post("/cron/run")
+async def cron_run_pipeline(request: Request) -> dict[str, Any]:
+    """Déclencheur du cron externe (cron-job.org) : statique, sans TTL.
+
+    - Header `X-Cron-Secret` (comparaison à temps constant).
+    - CRON_SECRET vide en config => 503 (endpoint désactivé).
+    - Répond IMMÉDIATEMENT (~<1 s) et exécute le pipeline en tâche de
+      fond : le timeout 30 s de cron-job.org ne coupe plus le run.
+    """
+    if not config.CRON_SECRET:
+        raise HTTPException(503, "CRON_SECRET non configuré")
+    provided = request.headers.get("X-Cron-Secret", "")
+    if not hmac.compare_digest(provided, config.CRON_SECRET):
+        raise HTTPException(403, "secret cron invalide")
+    # Pas de BackgroundTasks : on crée la tâche explicitement pour que
+    # le keep-alive survive indépendamment du cycle requête/réponse.
+    asyncio.get_running_loop().create_task(_pipeline_background_task())
+    return {"started": True, "mode": "cron"}
+
+
+@app.post("/run")
+async def run_pipeline_endpoint(_user: dict[str, Any] = Depends(require_admin)) -> dict[str, Any]:
+    return await _execute_pipeline()
 
 
 @app.get("/sectors")

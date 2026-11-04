@@ -34,6 +34,11 @@ WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "soukna-verify")
 # signature X-Hub-Signature-256 des POST /webhook. Vide = pas de vérification
 # (dev local uniquement) — à renseigner en production.
 WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
+
+# Secret du déclencheur cron externe (cron-job.org) : header X-Cron-Secret
+# sur POST /cron/run. Vide = endpoint désactivé (503). Statique, n'expire
+# jamais (contrairement aux tokens admin TTL 12h).
+CRON_SECRET = os.getenv("CRON_SECRET", "")
 WHATSAPP_API = "https://graph.facebook.com/v21.0"
 
 # Kill switch (runbook : phase Contention) : true => aucun envoi WhatsApp

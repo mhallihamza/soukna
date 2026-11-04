@@ -111,3 +111,45 @@ def test_webhook_signature_absent_secret_no_check(monkeypatch):
     monkeypatch.setattr("api.config", cfg)
     r = client.post("/webhook", json={"object": "whatsapp_business_account", "entry": []})
     assert r.status_code == 200
+
+
+# --- Déclencheur cron externe (POST /cron/run) ----------------------------
+
+def _patch_cron(monkeypatch, secret: str) -> None:
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "CRON_SECRET", secret)
+    monkeypatch.setattr("api.config", cfg)
+
+    async def _noop() -> None:
+        return None
+
+    # On neutralise la tâche de fond : les tests ne doivent jamais
+    # exécuter le graphe (conftest interdit le contact DB).
+    monkeypatch.setattr("api._pipeline_background_task", _noop)
+
+
+def test_cron_run_disabled_without_secret(monkeypatch):
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "CRON_SECRET", "")
+    monkeypatch.setattr("api.config", cfg)
+    r = client.post("/cron/run", headers={"X-Cron-Secret": "x"})
+    assert r.status_code == 503
+
+
+def test_cron_run_wrong_secret_rejected(monkeypatch):
+    _patch_cron(monkeypatch, "real-cron-secret")
+    r = client.post("/cron/run", headers={"X-Cron-Secret": "wrong"})
+    assert r.status_code == 403
+
+
+def test_cron_run_missing_header_rejected(monkeypatch):
+    _patch_cron(monkeypatch, "real-cron-secret")
+    r = client.post("/cron/run")
+    assert r.status_code == 403
+
+
+def test_cron_run_ok_starts_background(monkeypatch):
+    _patch_cron(monkeypatch, "real-cron-secret")
+    r = client.post("/cron/run", headers={"X-Cron-Secret": "real-cron-secret"})
+    assert r.status_code == 200
+    assert r.json() == {"started": True, "mode": "cron"}
