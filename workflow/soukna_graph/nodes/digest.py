@@ -18,6 +18,14 @@ from ..tracing import traced
 
 VERDICT_LABELS = {"go": "🟢 GO", "a_etudier": "🟡 À ÉTUDIER", "no_go": "🔴 NO-GO"}
 
+# Bandeau apposé quand AUCUNE source réelle n'a répondu (repli seeds) :
+# le contenu est celui des données de démonstration, pas du portail.
+SEED_NOTICE = (
+    "ℹ️ Sources momentanément indisponibles — cet aperçu repose sur des "
+    "données d'exemple, pas sur le portail national. Les envois "
+    "WhatsApp/email sont suspendus jusqu'au retour des sources."
+)
+
 REGISTER_HINT = (
     "Votre numéro n'est pas encore enregistré chez Soukna.\n\n"
     "Créez le compte de votre entreprise sur le dashboard en renseignant "
@@ -106,6 +114,11 @@ def digest_node(state: AgentState) -> dict[str, Any]:
         }
 
     # --- Mode pipeline : un digest par entreprise, canaux opt-in ----------
+    # Si TOUTES les sources ont échoué (mode "seed", ex. portail suspendu),
+    # le contenu est de l'exemple : on le publie au dashboard avec un
+    # bandeau mais on ne fait partir AUCUN envoi WhatsApp/email.
+    seed_fallback = str(state.get("source_mode") or "") == "seed"
+
     delivered: list[str] = []
     by_company: dict[str, list[dict[str, Any]]] = {}
     for it in items:
@@ -114,20 +127,23 @@ def digest_node(state: AgentState) -> dict[str, Any]:
     for company_id, its in by_company.items():
         company = db.get_company(company_id) or {}
         text = build_digest_text(company, its)
+        if seed_fallback:
+            text = f"{SEED_NOTICE}\n\n{text}"
         channels = ["dashboard"]
         db.save_digest(company_id=company_id, content=text, channels=channels)
-        if company.get("channel_whatsapp") and company.get("phone"):
-            ok, _detail = send_whatsapp(str(company["phone"]), text)
-            if ok:
-                channels.append("whatsapp")
-        if company.get("channel_email") and company.get("email"):
-            ok, _detail = send_email(
-                str(company["email"]),
-                f"Soukna — synthèse du {date.today():%d/%m/%Y}",
-                text,
-            )
-            if ok:
-                channels.append("email")
+        if not seed_fallback:
+            if company.get("channel_whatsapp") and company.get("phone"):
+                ok, _detail = send_whatsapp(str(company["phone"]), text)
+                if ok:
+                    channels.append("whatsapp")
+            if company.get("channel_email") and company.get("email"):
+                ok, _detail = send_email(
+                    str(company["email"]),
+                    f"Soukna — synthèse du {date.today():%d/%m/%Y}",
+                    text,
+                )
+                if ok:
+                    channels.append("email")
         db.save_digest(company_id=company_id, content=text, channels=channels)
         delivered.append(f"{company.get('name', company_id)}:{'+'.join(channels)}")
 

@@ -2,6 +2,9 @@
 # API hors-ligne : health, vérification webhook Meta, payload vide.
 # Aucune base de données requise (startup tolère l'absence de DB).
 # =====================================================================
+import hashlib
+import hmac
+
 from fastapi.testclient import TestClient
 
 from api import app
@@ -63,3 +66,48 @@ def test_login_invalid(monkeypatch):
     monkeypatch.setattr("api.db.query", lambda sql, params=(): [])
     r = client.post("/auth/login", json={"username": "admin", "password": "wrong"})
     assert r.status_code == 401
+
+
+# --- Signature webhook Meta (X-Hub-Signature-256) -------------------------
+
+
+def _signed(body: bytes, secret: str) -> str:
+    return "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+
+
+def test_webhook_signature_valid(monkeypatch):
+    secret = "test-app-secret"
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "WHATSAPP_APP_SECRET", secret)
+    monkeypatch.setattr("api.config", cfg)
+    body = b'{"object":"whatsapp_business_account","entry":[]}'
+    r = client.post("/webhook", content=body,
+                    headers={"Content-Type": "application/json",
+                             "X-Hub-Signature-256": _signed(body, secret)})
+    assert r.status_code == 200
+
+
+def test_webhook_signature_missing_rejected(monkeypatch):
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "WHATSAPP_APP_SECRET", "test-app-secret")
+    monkeypatch.setattr("api.config", cfg)
+    r = client.post("/webhook", json={"object": "whatsapp_business_account", "entry": []})
+    assert r.status_code == 403
+
+
+def test_webhook_signature_bad_rejected(monkeypatch):
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "WHATSAPP_APP_SECRET", "test-app-secret")
+    monkeypatch.setattr("api.config", cfg)
+    r = client.post("/webhook", json={"object": "whatsapp_business_account", "entry": []},
+                    headers={"X-Hub-Signature-256": "sha256=" + "0" * 64})
+    assert r.status_code == 403
+
+
+def test_webhook_signature_absent_secret_no_check(monkeypatch):
+    # Secret non configuré (dev local) : aucune exigence de signature.
+    import soukna_graph.config as cfg
+    monkeypatch.setattr(cfg, "WHATSAPP_APP_SECRET", "")
+    monkeypatch.setattr("api.config", cfg)
+    r = client.post("/webhook", json={"object": "whatsapp_business_account", "entry": []})
+    assert r.status_code == 200

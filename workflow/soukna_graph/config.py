@@ -30,6 +30,10 @@ def llm_ready() -> bool:
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "")
 WHATSAPP_PHONE_NUMBER_ID = os.getenv("WHATSAPP_PHONE_NUMBER_ID", "")
 WHATSAPP_VERIFY_TOKEN = os.getenv("WHATSAPP_VERIFY_TOKEN", "soukna-verify")
+# App Secret (Meta > WhatsApp > API > App settings) : sert à vérifier la
+# signature X-Hub-Signature-256 des POST /webhook. Vide = pas de vérification
+# (dev local uniquement) — à renseigner en production.
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET", "")
 WHATSAPP_API = "https://graph.facebook.com/v21.0"
 
 # Kill switch (runbook : phase Contention) : true => aucun envoi WhatsApp

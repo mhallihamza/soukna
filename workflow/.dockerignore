@@ -1,0 +1,18 @@
+# Ne JAMAIS embarquer les secrets dans l'image Docker
+.env
+.env.*
+!.env.example
+
+# Caches et artefacts locaux
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+artifacts/
+tests/
+scripts/_*.py
+
+# Git et docs de dépôt
+.git/
+.github/
+docs/

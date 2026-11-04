@@ -352,8 +352,34 @@ async def process_incoming(msg: dict[str, str]) -> None:
             pass
 
 
+def _verify_meta_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    """Vérifie X-Hub-Signature-256 (Meta signe le corps brut avec l'App Secret).
+
+    Retourne True si la signature est valide OU si WHATSAPP_APP_SECRET
+    est vide (mode dev local) ; False si le secret est configuré et la
+    signature absente/mismatch.
+    """
+    secret = config.WHATSAPP_APP_SECRET
+    if not secret:
+        return True
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        secret.encode("utf-8"), raw_body, hashlib.sha256,
+    ).hexdigest()
+    provided = signature_header[len("sha256="):].strip()
+    return hmac.compare_digest(expected, provided)
+
+
 @app.post("/webhook")
-async def webhook(payload: dict[str, Any], tasks: BackgroundTasks) -> dict[str, bool]:
+async def webhook(request: Request, tasks: BackgroundTasks) -> dict[str, bool]:
+    raw_body = await request.body()
+    if not _verify_meta_signature(raw_body, request.headers.get("X-Hub-Signature-256")):
+        raise HTTPException(403, "signature webhook invalide")
+    try:
+        payload = json.loads(raw_body)
+    except (ValueError, TypeError):
+        return {"received": True}  # corps non-JSON : rien à traiter
     for msg in extract_messages(payload):
         if msg["text"]:
             tasks.add_task(process_incoming, msg)

@@ -278,7 +278,8 @@ def _quick_search(term: str) -> list[dict[str, Any]]:
 def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
                     date_start: str | None = None, date_end: str | None = None,
                     max_pages: int = 40, max_repeats: int = 3,
-                    pagestate_provider: Any = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+                    progress_cb: Any = None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """progress_cb(page:int, collected:int, new:int) — suivi live du walk."""
     """Recherche avancée OFFICIELLE avec pagination robuste.
 
     Retourne (items_uniques, stats). La pagination PRADO est parfois
@@ -327,6 +328,8 @@ def advanced_search(keyword: str | None = None, annonce_type: str | None = None,
         new = [i for i in items if str(i.get("source_ref")) not in collected]
         for it in items:
             collected[str(it.get("source_ref"))] = it
+        if progress_cb:
+            progress_cb(stats["pages"], len(collected), len(new))
         if new:
             repeats = 0                     # progression saine
         else:

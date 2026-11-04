@@ -1,0 +1,10 @@
+# Build inclusion minimale — node_modules est reconstruit, .next est
+# généré dans l'image, et les secrets locaux ne partent JAMAIS.
+node_modules/
+.next/
+out/
+tsconfig.tsbuildinfo
+.env
+.env.*
+!.env.example
+.pytest_cache/
